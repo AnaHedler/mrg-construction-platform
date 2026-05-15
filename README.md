@@ -1,2 +1,54 @@
-# mrg-construction-platform
-Plataforma operacional para construção civil com controle financeiro, gestão de compras, dashboards, solicitações de materiais via mobile e gerenciamento multiusuário.
+# MRG Construction Platform
+
+Plataforma operacional para construção civil focada em controle financeiro, gestão de compras, solicitações de materiais, dashboards operacionais e integração mobile.
+
+## Principais Recursos
+
+* Controle financeiro de obras
+* Solicitação de materiais via mobile
+* Gestão de compras
+* Dashboards operacionais
+* Exportação PDF e Excel
+* Controle multiusuário
+* Auditoria de alterações
+* Integração Supabase
+* APK Android via Capacitor
+
+## Tecnologias
+
+* HTML
+* CSS
+* JavaScript
+* Capacitor
+* Supabase
+* Android Studio
+* Node.js
+
+## Mobile
+
+Aplicação convertida para APK Android utilizando Capacitor.
+
+## Estrutura do Projeto
+
+```text
+android/
+resources/
+scripts/
+supabase/
+www/
+```
+
+## Build
+
+```bash
+npm install
+npm run build
+```
+
+## Android APK
+
+```bash
+npx cap sync
+cd android
+.\gradlew assembleDebug
+```
