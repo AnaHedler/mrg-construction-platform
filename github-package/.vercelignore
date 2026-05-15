@@ -1,0 +1,8 @@
+android
+backend
+node_modules
+resources
+supabase
+*.zip
+*.apk
+*.aab

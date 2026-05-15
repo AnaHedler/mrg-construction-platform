@@ -1,0 +1,633 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#000000">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<link rel="icon" type="image/png" sizes="512x512" href="assets/engerama-hub-icon.png">
+<link rel="apple-touch-icon" href="assets/engerama-hub-icon.png">
+<link rel="manifest" href="manifest.json">
+<title>Engerama — Cronograma Financeiro</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<input type="file" id="file-import" accept=".xlsx,.xls,.csv" style="display:none" onchange="importExcel(event)">
+<div id="toast" class="toast"></div>
+<div id="app-splash" class="app-splash">
+  <img src="assets/engerama-hub-icon.png" alt="Engerama Hub">
+  <strong>ENGERAMA HUB</strong>
+  <span>Carregando sistema...</span>
+</div>
+<div id="sidebar-overlay" class="sidebar-overlay" onclick="closeMobileMenu()"></div>
+
+<div id="quick-chat" class="quick-chat">
+  <div id="quick-chat-panel" class="quick-chat-panel" aria-live="polite">
+    <div class="quick-chat-head">
+      <div class="quick-chat-title">
+        <b>Assistente Engerama</b>
+        <span>Respostas prontas do sistema</span>
+      </div>
+      <button class="quick-chat-close" onclick="toggleQuickChat(false)" aria-label="Fechar chat">×</button>
+    </div>
+    <div id="quick-chat-body" class="quick-chat-body">
+      <div class="quick-chat-msg bot">Olá, como posso ajudar?☺️</div>
+    </div>
+    <div class="quick-chat-chips">
+      <button class="quick-chat-chip" onclick="askQuickChat('Como importar Excel?')">Importar Excel</button>
+      <button class="quick-chat-chip" onclick="askQuickChat('Como exportar Excel?')">Exportar Excel</button>
+      <button class="quick-chat-chip" onclick="askQuickChat('Como imprimir relatório?')">Imprimir relatório</button>
+      <button class="quick-chat-chip" onclick="askQuickChat('Como funciona a parte de insumos?')">Insumos</button>
+      <button class="quick-chat-chip" onclick="quickChatGoToInsumos()">Solicitar material</button>
+      <button class="quick-chat-chip" onclick="askQuickChat('Qual o status do pedido 001?')">Status pedido</button>
+      <button class="quick-chat-chip" onclick="askQuickChat('Como liberar obras para usuário?')">Usuários</button>
+      <button class="quick-chat-chip" onclick="askQuickChat('Como cadastrar obra?')">Obras</button>
+    </div>
+    <form class="quick-chat-form" onsubmit="quickChatSubmit(event)">
+      <input id="quick-chat-input" type="text" placeholder="Digite aqui..." autocomplete="off">
+      <button type="submit">Enviar</button>
+    </form>
+  </div>
+  <button class="quick-chat-toggle" onclick="toggleQuickChat()" aria-label="Abrir chat">?</button>
+</div>
+
+<div id="modal-print-preview" class="modal-overlay">
+  <div class="modal-box wide">
+    <div class="modal-header">
+      <div class="print-modal-title">
+        <h2>Relatório Executivo</h2>
+        <span>Pronto para exportar ou imprimir</span>
+      </div>
+      <div class="print-modal-actions">
+        <button class="btn-action" onclick="confirmPrintRelatorio()">Imprimir</button>
+        <button class="btn-action" onclick="exportReportPdf()">Exportar PDF</button>
+        <button class="modal-close" onclick="closePrintPreview()">×</button>
+      </div>
+    </div>
+    <div id="print-preview-content" class="print-preview-body"></div>
+
+  </div>
+</div>
+
+<!-- ══ LOGIN ══ -->
+
+
+<div id="modal-insumo-compra" class="modal-overlay">
+  <div class="modal-box insumo-flow-modal">
+    <div class="insumo-flow-head">
+      <div class="insumo-flow-title">
+        <div class="insumo-flow-icon">$</div>
+        <div>
+          <h2>Registrar compra</h2>
+          <p>Informe fornecedor, data e comentario para enviar o pedido para em rota.</p>
+        </div>
+      </div>
+      <button class="modal-close" onclick="closeInsumoPurchaseModal()">×</button>
+    </div>
+    <form class="insumo-flow-body" onsubmit="saveInsumoPurchase(event)">
+      <input type="hidden" id="insumo-compra-id">
+      <div class="insumo-flow-material" id="insumo-compra-material">Material<span>Pedido selecionado</span></div>
+      <div class="insumo-flow-grid">
+        <div class="modal-field">
+          <label>Nome do pedido</label>
+          <input id="insumo-compra-material-edit" type="text" autocomplete="off" placeholder="Nome do material">
+        </div>
+        <div class="modal-field">
+          <label>Quantidade</label>
+          <input id="insumo-compra-qtd-edit" type="number" step="0.01" min="0">
+        </div>
+        <div class="modal-field">
+          <label>Unidade</label>
+          <select id="insumo-compra-unidade-edit"></select>
+        </div>
+        <div class="modal-field">
+          <label>Fornecedor</label>
+          <input id="insumo-compra-fornecedor" type="text" autocomplete="off" placeholder="Ex: ArgaFacil">
+        </div>
+        <div class="modal-field">
+          <label>Data da compra</label>
+          <input id="insumo-compra-data" type="date">
+        </div>
+      </div>
+      <div class="modal-field">
+        <label>Comentario da compra</label>
+        <textarea id="insumo-compra-comentario" placeholder="Prazo combinado, condição, observações do fornecedor..."></textarea>
+      </div>
+      <div class="modal-field">
+        <label>Fotos e anexos da compra</label>
+        <input id="insumo-compra-anexos" type="file" multiple accept="image/*,.pdf">
+        <div id="insumo-compra-anexos-list" class="insumo-file-row"></div>
+      </div>
+      <div class="modal-field">
+        <label>Anexar NFE da compra</label>
+        <input id="insumo-compra-nfe" type="file" accept=".pdf,application/pdf" onchange="readInsumoNfeFile(event)">
+        <div id="insumo-nfe-preview" class="nfe-preview">Compras anexa a NFE aqui. Ela ficará salva para baixar no pedido.</div>
+      </div>
+      <div class="insumo-flow-actions">
+        <button type="button" class="btn-action" onclick="closeInsumoPurchaseModal()">Cancelar</button>
+        <button type="submit" class="btn-action primary">Salvar compra</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div id="modal-insumo-editar" class="modal-overlay">
+  <div class="modal-box insumo-flow-modal">
+    <div class="insumo-flow-head">
+      <div class="insumo-flow-title">
+        <div class="insumo-flow-icon">✎</div>
+        <div>
+          <h2>Editar pedido</h2>
+          <p>Disponível somente antes da compra entrar em rota.</p>
+        </div>
+      </div>
+      <button class="modal-close" onclick="closeInsumoEditModal()">×</button>
+    </div>
+    <form class="insumo-flow-body" onsubmit="saveInsumoEdit(event)">
+      <input type="hidden" id="insumo-edit-id">
+      <div class="insumo-flow-material" id="insumo-edit-title">Pedido<span>Pendente</span></div>
+      <div class="insumo-flow-grid">
+        <div class="modal-field">
+          <label>Material</label>
+          <input id="insumo-edit-material" type="text" autocomplete="off">
+        </div>
+        <div class="modal-field">
+          <label>Quantidade</label>
+          <input id="insumo-edit-qtd" type="number" step="0.01" min="0">
+        </div>
+        <div class="modal-field">
+          <label>Unidade</label>
+          <select id="insumo-edit-unidade"></select>
+        </div>
+        <div class="modal-field">
+          <label>Para quando precisa</label>
+          <input id="insumo-edit-needed-by" type="date">
+        </div>
+      </div>
+      <div class="modal-field">
+        <label>Observação</label>
+        <textarea id="insumo-edit-obs" placeholder="Detalhes, marca, medida, urgência..."></textarea>
+      </div>
+      <div class="modal-field">
+        <label>Motivo da alteração</label>
+        <textarea id="insumo-edit-motivo" placeholder="Ex: Ajuste de quantidade solicitado pela obra" required></textarea>
+      </div>
+      <div class="insumo-flow-actions">
+        <button type="button" class="btn-action" onclick="closeInsumoEditModal()">Cancelar</button>
+        <button type="submit" class="btn-action primary">Salvar alteração</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div id="modal-insumo-receber" class="modal-overlay">
+  <div class="modal-box insumo-flow-modal">
+    <div class="insumo-flow-head">
+      <div class="insumo-flow-title">
+        <div class="insumo-flow-icon">✓</div>
+        <div>
+          <h2>Confirmar recebimento</h2>
+          <p>Registre o recebimento na obra com comentario opcional.</p>
+        </div>
+      </div>
+      <button class="modal-close" onclick="closeInsumoReceiveModal()">×</button>
+    </div>
+    <form class="insumo-flow-body" onsubmit="saveInsumoReceive(event)">
+      <input type="hidden" id="insumo-receber-id">
+      <div class="insumo-flow-material" id="insumo-receber-material">Material<span>Pedido selecionado</span></div>
+      <div class="modal-field">
+        <label>NFE anexada pelo compras</label>
+        <div id="insumo-receber-nfe" class="receive-checklist">Nenhuma NFE anexada neste pedido.</div>
+      </div>
+      <div class="modal-field">
+        <label>Comentario do recebimento</label>
+        <textarea id="insumo-receber-comentario" placeholder="Quantidade conferida, avaria, local armazenado, observações..."></textarea>
+      </div>
+      <div class="insumo-flow-actions">
+        <button type="button" class="btn-action" onclick="closeInsumoReceiveModal()">Cancelar</button>
+        <button type="submit" class="btn-action primary">Confirmar recebimento</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div id="modal-insumo-detalhe" class="modal-overlay">
+  <div class="modal-box wide insumo-flow-modal">
+    <div class="modal-header">
+      <h2>Detalhes do pedido</h2>
+      <button class="modal-close" onclick="closeInsumoDetailModal()">×</button>
+    </div>
+    <div id="insumo-detail-content"></div>
+  </div>
+</div>
+
+<div id="page-login" class="page active">
+  <div class="login-logo-area">
+    <img class="login-logo-img" src="assets/img.png" alt="Engerama">
+    <div class="login-logo-sub">ENGERAMA HUB</div>
+  </div>
+  <div class="login-card">
+    <div class="lf-label">Usuário</div>
+    <div class="lf-input-wrap">
+      <span class="icon">👤</span>
+      <input type="text" id="inp-user" placeholder="Digite o usuário" autocomplete="username">
+    </div>
+    <div class="lf-label">Senha</div>
+    <div class="lf-input-wrap">
+      <span class="icon">🔒</span>
+      <input type="password" id="inp-pass" placeholder="Digite a senha" autocomplete="current-password">
+    </div>
+    <div id="login-err" class="login-err">Usuário ou senha incorretos.</div>
+    <button class="btn-login" onclick="doLogin()">Entrar</button>
+  </div>
+  <div class="login-info">Para cadastrar novos usuários, entre como <b>admin</b> e acesse <b>Usuários</b>.</div>
+</div>
+
+<!-- ══ MODAL NOVA OBRA ══ -->
+<div id="modal-nova-obra" class="modal-overlay">
+  <div class="modal-box wide">
+    <div class="modal-header">
+      <h2 id="modal-obra-title">➕ Nova Obra / Projeto</h2>
+      <button class="modal-close" onclick="closeModalObra()">×</button>
+    </div>
+    <div class="modal-row">
+      <div class="modal-field">
+        <label>Nome da Obra *</label>
+        <input type="text" id="no-nome" placeholder="Ex: Hospital São José">
+      </div>
+      <div class="modal-field">
+        <label>Código da Obra *</label>
+        <input type="text" id="no-codigo" placeholder="Ex: SJP-001">
+      </div>
+    </div>
+    <div class="modal-row">
+      <div class="modal-field">
+        <label>Status</label>
+        <select id="no-status">
+          <option value="ativo">🟢 Ativo</option>
+          <option value="pausado">🟡 Pausado</option>
+          <option value="concluido">🔵 Concluído</option>
+        </select>
+      </div>
+      <div class="modal-field">
+        <label>Orçamento Total (R$) *</label>
+        <input type="number" id="no-orcamento" placeholder="0,00" min="0" step="0.01">
+      </div>
+    </div>
+    <div class="modal-row">
+      <div class="modal-field">
+        <label>Data de Início *</label>
+        <input type="date" id="no-inicio" style="color-scheme:dark;">
+      </div>
+      <div class="modal-field">
+        <label>Data de Término *</label>
+        <input type="date" id="no-termino" style="color-scheme:dark;">
+      </div>
+    </div>
+    <div class="modal-field">
+      <label>Descrição</label>
+      <textarea id="no-descricao" placeholder="Descreva brevemente a obra..."></textarea>
+    </div>
+    <div id="modal-obra-err" class="modal-err">Por favor, preencha todos os campos obrigatórios (*).</div>
+    <button class="btn-modal-submit" onclick="saveNovaObra()">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+        <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+        <polyline points="17 21 17 13 7 13 7 21"/>
+        <polyline points="7 3 7 8 15 8"/>
+      </svg>
+      Salvar Projeto
+    </button>
+  </div>
+</div>
+
+<!-- ══ MODAL NOVO MÊS ══ -->
+<div id="modal-novo-mes" class="modal-overlay">
+  <div class="modal-box">
+    <div class="modal-header">
+      <h2>📅 Adicionar Novo Mês</h2>
+      <button class="modal-close" onclick="closeModalMes()">×</button>
+    </div>
+    <div class="modal-field">
+      <label>Mês de Referência *</label>
+      <input type="month" id="nm-mes" style="color-scheme:dark;">
+    </div>
+    <div class="modal-row">
+      <div class="modal-field">
+        <label>Receita Real (R$)</label>
+        <input type="number" id="nm-receita" value="0" min="0" step="0.01" placeholder="0,00">
+      </div>
+      <div class="modal-field">
+        <label>Gasto Real (R$)</label>
+        <input type="number" id="nm-gasto" value="0" min="0" step="0.01" placeholder="0,00">
+      </div>
+    </div>
+    <div class="modal-field">
+      <label>Previsto Acumulado (R$ mi)</label>
+      <input type="number" id="nm-previsto" step="0.001" placeholder="Ex: 61.434 (em milhões)">
+    </div>
+    <div id="modal-mes-err" class="modal-err">Por favor, preencha o mês.</div>
+    <button class="btn-modal-submit" onclick="addNovoMes()">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+        <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+      </svg>
+      Adicionar Medição
+    </button>
+  </div>
+</div>
+
+<!-- ══ APP SHELL ══ -->
+<div id="page-app" class="page">
+  <nav class="sidebar" id="app-sidebar">
+    <div class="sb-brand">
+      <svg class="sb-brand-logo" viewBox="0 0 64 64" fill="none">
+        <polygon points="32,4 60,58 4,58" fill="#f0c000"/>
+        <polygon points="32,18 48,50 16,50" fill="#1a1600" opacity=".6"/>
+        <text x="32" y="48" text-anchor="middle" font-size="11" font-weight="900" fill="#f0c000" font-family="Arial">E</text>
+      </svg>
+      <div class="sb-brand-text"><b>ENGERAMA</b><span>Cronograma Fin.</span></div>
+    </div>
+    <div class="sb-nav">
+      <div class="sb-item active" id="nav-obras" onclick="showView('obras')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>
+        </svg>
+        Obras
+      </div>
+      <div class="sb-item mobile-hide-relatorio" id="nav-relatorio" onclick="showView('relatorio')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+          <polyline points="14 2 14 8 20 8"/>
+          <line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>
+        </svg>
+        Relatório
+      </div>
+      <div class="sb-item" id="nav-insumos" onclick="showView('insumos')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 16V8a2 2 0 0 0-1-1.73L13 2.27a2 2 0 0 0-2 0L4 6.27A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+          <path d="M3.3 7L12 12l8.7-5M12 22V12"/>
+        </svg>
+        Insumos
+      </div>
+
+      <div class="sb-item" id="nav-usuarios" onclick="showView('usuarios')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+          <circle cx="9" cy="7" r="4"/>
+          <path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+        </svg>
+        Usuários
+      </div>
+    </div>
+    <div class="sb-bottom">
+      <div class="sb-sair" onclick="doLogout()">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+          <polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>
+        </svg>
+        Sair
+      </div>
+    </div>
+  </nav>
+
+  <div class="content" id="main-content">
+    <div class="topbar" id="topbar">
+      <div class="topbar-main">
+        <button class="mobile-menu-btn" onclick="toggleMobileMenu()" aria-label="Abrir menu">|||</button>
+        <button class="topbar-back-btn" id="topbar-back-btn" onclick="goBackApp()" aria-label="Voltar">Voltar</button>
+        <div>
+          <div class="topbar-path" id="topbar-path">Obras / Projetos</div>
+          <div class="topbar-sub">Olá, <span id="topbar-user">Usuário</span> &nbsp;·&nbsp; <span id="topbar-date"></span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- VIEW OBRAS -->
+    <div id="view-obras" class="view-section vactive">
+      <div class="view-wrap">
+        <div class="view-header">
+          <div>
+            <h2>🏗️ Projetos / Obras</h2>
+            <small id="obras-count-label">Carregando...</small>
+          </div>
+          <button class="btn-new" onclick="openModalObra()">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+              <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+            </svg>
+            Nova Obra
+          </button>
+        </div>
+        <div class="stats-row" id="dash-stats-row">
+          <div class="stat-item"><div class="stat-lbl">Orçamento Total</div><div class="stat-val" id="dash-orc-total">—</div></div>
+          <div class="stat-item"><div class="stat-lbl">Total de Projetos</div><div class="stat-val white" id="dash-total">0</div></div>
+          <div class="stat-item"><div class="stat-lbl">Ativos</div><div class="stat-val green" id="dash-ativos">0</div></div>
+          <div class="stat-item"><div class="stat-lbl">Pausados</div><div class="stat-val amber" id="dash-pausados" style="color:#f0c000">0</div></div>
+          <div class="stat-item"><div class="stat-lbl">Concluídos</div><div class="stat-val white" id="dash-concluidos">0</div></div>
+        </div>
+        <div class="proj-grid" id="proj-grid"></div>
+      </div>
+    </div>
+
+    <!-- VIEW DETAIL -->
+    <div id="view-detail">
+      <div class="detail-topbar">
+        <div class="detail-title-row">
+          <button class="back-btn" onclick="showView('obras')">← Voltar</button>
+          <div class="proj-icon" style="width:34px;height:34px;font-size:16px;">🏗️</div>
+          <div>
+            <div class="detail-title" id="d-title">—</div>
+            <div class="detail-sub" id="d-sub">—</div>
+          </div>
+        </div>
+        <div class="detail-actions">
+          <button class="btn-action primary" onclick="openModalMes()">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+            </svg>
+            Novo Mês
+          </button>
+          <button class="btn-action" onclick="exportExcel()">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+            Exportar Excel
+          </button>
+          <button class="btn-action" onclick="document.getElementById('file-import').click()">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+            </svg>
+            Importar Excel
+          </button>
+          <button class="btn-action" onclick="openPrintPreview()">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+              <polyline points="14 2 14 8 20 8"/>
+            </svg>
+            Pré-visualizar impressão
+          </button>
+        </div>
+      </div>
+      <div class="detail-body" id="detail-body"></div>
+    </div>
+
+    <!-- VIEW RELATÓRIO -->
+    <div id="view-relatorio" class="view-section mobile-hide-relatorio">
+      <div class="view-wrap">
+        <div class="view-header">
+          <h2>📊 Relatório</h2>
+          <div class="report-actions">
+            <select id="report-project-select" onchange="renderRelatorio()"></select>
+            <button class="btn-action" onclick="exportExcel()">Exportar Excel</button>
+            <button class="btn-action" onclick="openPrintPreview()">Pré-visualizar impressão</button>
+          </div>
+        </div>
+        <div id="relatorio-content"></div>
+      </div>
+    </div>
+
+    <!-- VIEW INSUMOS -->
+    <div id="view-insumos" class="view-section">
+      <div class="view-wrap">
+        <div class="view-header">
+          <div>
+            <h2>Insumos / Pedidos de Materiais</h2>
+            <small>Pedidos da obra, compras e recebimento com usuario automatico</small>
+          </div>
+          <div class="detail-actions">
+            <button class="btn-action" onclick="openModalObra()">Nova Obra</button>
+            <button class="btn-action" onclick="document.getElementById('insumos-import-file').click()">Importar Excel</button>
+            <button class="btn-action danger" id="btn-delete-all-insumos" onclick="deleteAllInsumoPedidos()">Apagar todos</button>
+          </div>
+        </div>
+        <input id="insumos-import-file" type="file" accept=".xlsx,.xls,.csv" style="display:none" onchange="importInsumosExcel(event)">
+        <div class="insumos-kpis">
+          <div class="insumo-kpi pending"><span>Pendentes</span><b id="insumo-kpi-pendente">0</b></div>
+          <div class="insumo-kpi route"><span>Em rota</span><b id="insumo-kpi-rota">0</b></div>
+          <div class="insumo-kpi done"><span>Concluidos</span><b id="insumo-kpi-concluido">0</b></div>
+          <div class="insumo-kpi"><span>Total</span><b id="insumo-kpi-total">0</b></div>
+        </div>
+        <div class="insumos-shell">
+          <div class="insumos-panel">
+            <button type="button" class="mobile-insumo-form-toggle" onclick="toggleMobileInsumoForm()">Novo pedido de material</button>
+            <h3>Novo pedido de material</h3>
+            <form class="insumos-form" onsubmit="saveInsumoPedido(event)">
+              <label>Obra<select id="insumo-form-obra"></select></label>
+              <label>Material / descricao
+                <div class="material-suggest-wrap">
+                  <input id="insumo-form-material" type="text" autocomplete="off" placeholder="Ex: Cimento CP-II 50 kg" oninput="showMaterialSuggestions(this.value)" onfocus="showMaterialSuggestions(this.value)">
+                  <div id="material-suggestions" class="material-suggestions"></div>
+                </div>
+              </label>
+              <div class="insumos-row">
+                <label>Quantidade<input id="insumo-form-qtd" type="number" step="0.01" min="0" placeholder="0"></label>
+                <label>Unidade<select id="insumo-form-unidade"></select></label>
+              </div>
+              <div class="insumo-items-builder">
+                <button type="button" class="btn-action" onclick="addInsumoItemFromForm()">Adicionar item ao pedido</button>
+                <div id="insumo-form-itens-list" class="insumo-items-list"></div>
+              </div>
+              <datalist id="insumo-unidades-list"></datalist>
+              <label>Para quando precisa<input id="insumo-form-needed-by" type="date"></label>
+              <label>Fotos / PDF do item<input id="insumo-form-foto" type="file" accept="image/*,.pdf,application/pdf" capture="environment" multiple><small>Permite tirar foto no celular ou anexar imagem/PDF.</small></label>
+              <label>Observacao<textarea id="insumo-form-obs" placeholder="Detalhes, marca, medida, urgencia..."></textarea></label>
+              <button class="btn-modal-submit" type="submit">Registrar pedido</button>
+            </form>
+          </div>
+          <div>
+            <div class="insumos-toolbar">
+              <select id="insumo-filter-obra" onchange="renderInsumos()"></select>
+              <select id="insumo-filter-status" onchange="renderInsumos()">
+                <option value="all">Todos os status</option>
+                <option value="pendente">Pendentes</option>
+                <option value="em_rota">Em rota</option>
+                <option value="concluido">Concluidos</option>
+              </select>
+              <button class="btn-action" onclick="renderInsumos()">Atualizar</button>
+            </div>
+            <div class="insumos-table-wrap">
+              <table class="insumos-table">
+                <thead>
+                  <tr>
+                    <th>Pedido</th><th>Material</th><th>Status</th><th>Acoes</th>
+                  </tr>
+                </thead>
+                <tbody id="insumos-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+
+    <!-- VIEW USUÁRIOS -->
+    <div id="view-usuarios" class="view-section">
+      <div class="view-wrap">
+        <div class="view-header">
+          <h2>👥 Usuários</h2>
+        </div>
+        <div class="user-card">
+          <form class="user-form" onsubmit="saveUser(event)">
+            <input type="hidden" id="user-edit-original">
+            <label>Usuário<input id="user-form-username" type="text" autocomplete="off"></label>
+            <label>Celular / WhatsApp<input id="user-form-phone" type="tel" autocomplete="tel" placeholder="Ex: (41) 99999-9999"></label>
+            <label>Perfil<select id="user-form-role" onchange="renderUserProjectOptions()"><option value="viewer">Visualizador</option><option value="admin">Administrador</option></select></label>
+            <label>Status<select id="user-form-active"><option value="true">Ativo</option><option value="false">Inativo</option></select></label>
+            <label id="user-module-access-label">O que este usuario pode visualizar
+              <div id="user-module-access" class="user-module-box">
+                <label><input type="checkbox" value="obras" onchange="renderUserProjectOptions()"> Obras</label>
+                <label><input type="checkbox" value="relatorio" onchange="renderUserProjectOptions()"> Relatorio</label>
+                <label><input type="checkbox" value="insumos" onchange="renderUserProjectOptions()"> Insumos</label>
+              </div>
+              <small>Marque as telas que este usuario podera abrir no menu.</small>
+            </label>
+            <label>Nova senha<input id="user-form-password" type="password" autocomplete="new-password"></label>
+            <label>Sua senha atual<input id="user-form-admin-password" type="password" autocomplete="current-password"></label>
+            <label id="user-project-access-label">Filtro de obras do usuario
+              <div class="user-project-access-head">
+                <span>Use apenas se quiser limitar quais obras ele enxerga na aba Obras.</span>
+                <div class="user-project-mini-actions">
+                  <button type="button" onclick="setUserProjectSelection(true)">Marcar todas</button>
+                  <button type="button" onclick="setUserProjectSelection(false)">Limpar</button>
+                </div>
+              </div>
+              <label class="user-project-all-option">
+                <input id="user-project-all" type="checkbox" onchange="renderUserProjectOptions()">
+                <span><b>Todas as obras</b><small>Padrao para compras e usuarios sem restricao por obra.</small></span>
+              </label>
+              <div id="user-project-access" class="user-project-box"></div>
+              <small>Se deixar "Todas as obras" marcado, nao precisa selecionar obra manualmente.</small>
+            </label>
+            <div class="user-actions">
+              <button type="button" class="btn-action" onclick="resetUserForm()">Limpar</button>
+              <button type="submit" class="btn-action primary">Salvar usuário</button>
+            </div>
+            <div id="user-form-msg" class="user-msg"></div>
+          </form>
+          <table class="med-table">
+            <thead><tr><th style="text-align:left">USUÁRIO</th><th style="text-align:left">PERFIL</th><th>ACESSOS</th><th>OBRAS/INSUMOS</th><th>STATUS</th><th>AÇÕES</th></tr></thead>
+            <tbody id="users-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /content -->
+</div><!-- /page-app -->
+
+<script src="app-config.js"></script>
+<script src="supabase.js"></script>
+<script src="auth.js"></script>
+<script src="api.js"></script>
+<script src="script.js"></script>
+</body>
+</html>

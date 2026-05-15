@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">engerama hub</string>
+    <string name="title_activity_main">engerama hub</string>
+    <string name="package_name">engerama.com.app</string>
+    <string name="custom_url_scheme">engerama.com.app</string>
+</resources>
