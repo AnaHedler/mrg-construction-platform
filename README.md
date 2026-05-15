@@ -3,17 +3,20 @@
 Plataforma operacional para construção civil focada em controle financeiro, gestão de compras, solicitações de materiais, dashboards operacionais e integração mobile.
 
 ## Principais Recursos
+## Principais Recursos
 
-* Controle financeiro mensal
-* Solicitação de materiais
-* Gestão de fluxo dos pedidos
-* Controle de compras
-* Dashboards operacionais
-* Exportação PDF e Excel
-* Controle multiusuário
-* Auditoria de alterações
-* Integração com Supabase
-* APK Android via Capacitor
+- Controle financeiro mensal das obras
+- Solicitação de materiais via mobile
+- Alertas financeiros e operacionais
+- Gestão do fluxo de pedidos e aprovações
+- Controle de compras e suprimentos
+- Dashboards operacionais em tempo real
+- Importação e exportação de planilha com dados do Excel
+- Geração de resumo financeiro completo da obra em PDF
+- Controle multiusuário com permissões de acesso
+- Auditoria e histórico de alterações
+- Integração com Supabase
+- Aplicação Android via Capacitor (APK)
 
 ## Tecnologias
 
