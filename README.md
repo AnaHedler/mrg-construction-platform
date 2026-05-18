@@ -2,8 +2,7 @@
 
 Plataforma operacional para construção civil focada em controle financeiro, gestão de compras, solicitações de materiais, dashboards operacionais e integração mobile.
 
-## Principais Recursos
-## Principais Recursos
+## Principais recursos 
 
 - Controle financeiro mensal das obras
 - Solicitação de materiais via mobile
