@@ -145,7 +145,7 @@ Importante: sincronizacao com o app totalmente fechado depende de uma rotina nat
 ## 10. Administracao e seguranca
 
 - O app usa Supabase como backend online.
-- A chave usada no APK e anon/publishable, nunca service_role.
+- A chave usada no APK deve ser anon/publishable, nunca chave privilegiada.
 - As tabelas usam RLS.
 - Os dados sao protegidos por usuario autenticado.
 - As informacoes ficam compartilhadas dentro da organizacao Engerama.

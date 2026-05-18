@@ -1,36 +1,40 @@
 # Engerama Hub
 
-Plataforma operacional para construção civil com foco em controle financeiro, gestão de compras, solicitações de materiais, dashboards operacionais e integração mobile.
+Plataforma operacional para construcao civil com controle financeiro, compras, solicitacoes de materiais, dashboards, auditoria e app mobile via Capacitor.
 
-## Segurança
+## Seguranca
 
-Este pacote foi sanitizado e não contém:
+Este pacote nao deve conter:
 
 * Senhas reais
 * Tokens privados
 * Chaves secretas
-* Credenciais de produção
+* Credenciais de producao
 * Keystore de assinatura
 * Artefatos de build (`dist`, APK ou AAB)
 
-## Configuração Supabase
+## Configuracao Supabase
 
-O arquivo `www/app-config.js` está vazio propositalmente:
+O arquivo `www/app-config.js` fica sem credenciais reais no GitHub:
 
 ```js
 supabaseUrl: ''
 supabaseAnonKey: ''
 ```
 
-Configure as variáveis de ambiente na Vercel:
+Configure na Vercel:
 
 ```text
-SUPABASE_URL
-SUPABASE_ANON_KEY
-ENGERAMA_ORG_ID
+SUPABASE_URL=
+SUPABASE_ANON_KEY=
+ENGERAMA_ORG_ID=
 ```
 
-## Build do Projeto
+Depois rode `supabase/schema.sql` no SQL Editor do Supabase.
+
+O login usa Supabase Auth. A tabela `usuarios` guarda permissao, telefone, empresa e obras permitidas, nunca senha em texto puro.
+
+## Build
 
 ```bash
 npm install
@@ -40,11 +44,8 @@ npm run build
 ## Deploy Vercel
 
 ```bash
-npx vercel login
 npx vercel --prod
 ```
-
-### Configuração
 
 * Build Command: `npm run build`
 * Output Directory: `dist`

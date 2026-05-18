@@ -1,46 +1,51 @@
-# Supabase no Engerama Hub
+# Supabase Multiusuário - Engerama Hub
 
-Arquivos do app:
+Use `supabase/schema.sql` no SQL Editor do Supabase para criar o banco online real do app.
 
-- `www/supabase.js`: cria o client Supabase com URL e anon/publishable key.
-- `www/auth.js`: login com Supabase Auth e sessao persistida no APK.
-- `www/api.js`: sincronizacao online com fallback local offline.
-- `supabase/schema.sql`: tabelas, RLS e policies.
+## Tabelas principais
 
-## Como ativar no Supabase
+- `empresas`
+- `usuarios`
+- `obras`
+- `pedidos`
+- `itens_pedido`
+- `compras`
+- `auditoria`
+- `notificacoes`
 
-1. Abra o SQL Editor do Supabase.
-2. Rode o arquivo `supabase/schema.sql`.
-3. Crie usuarios no Supabase Auth.
-4. Para login por nome curto, use e-mails no padrao:
+Todas as tabelas têm RLS ativado e políticas por empresa/organização.
 
-```text
-admin@engerama.local
-joao@engerama.local
-```
+## Login seguro
 
-O app tambem aceita e-mail completo no campo usuario.
+O login usa Supabase Auth. Senhas não ficam em tabelas públicas.
 
-## Dados compartilhados
+Fluxo recomendado:
 
-As solicitacoes de insumos, obras, relatorios financeiros, unidades e usuarios do app ficam em `app_records`.
-Esses registros agora sao compartilhados pela organizacao Engerama (`org_id`), entao todos os usuarios autenticados da mesma organizacao recebem as mesmas alteracoes.
+1. Crie o usuário em **Authentication > Users**.
+2. Use e-mail real ou o padrão `login@engerama.local`.
+3. Copie o UUID do usuário Auth.
+4. Insira o cadastro correspondente em `public.usuarios`, com `empresa_id`, `perfil`, módulos e obras permitidas.
 
-O campo `owner_id` continua salvo apenas para auditoria de quem criou ou enviou a alteracao.
+O SQL já inclui um bloco comentado para criar o primeiro admin com segurança.
 
-## Seguranca
+## Variáveis de ambiente
 
-- O frontend usa somente anon/publishable key.
-- Nunca coloque chave privilegiada no app.
-- RLS esta ativado e forcado em `organizations`, `profiles` e `app_records`.
-- Todas as policies usam `auth.uid()`.
-- Usuarios autenticados acessam somente dados da propria organizacao.
-- CRUD em `app_records` e protegido por usuario autenticado e `org_id`.
+Configure na Vercel:
 
-## Modo offline
+- `SUPABASE_URL`
+- `SUPABASE_ANON_KEY`
+- `ENGERAMA_ORG_ID`
 
-Se Supabase estiver sem internet, CDN bloqueado, sem sessao ou com erro, o app continua usando `localStorage`.
+No front-end use somente a anon/publishable key. Nunca coloque chave privilegiada no HTML, JS, GitHub, Vercel pública ou APK.
 
-Toda alteracao local marca uma sincronizacao pendente. Quando a internet volta, quando o app volta para primeiro plano ou durante a verificacao periodica, o app tenta enviar as pendencias e baixar as mudancas feitas por outros usuarios.
+## Perfis
 
-Observacao: sincronizacao com o Android totalmente fechado exige rotina nativa de segundo plano, como WorkManager/background task. O JavaScript do WebView sincroniza automaticamente enquanto o app esta aberto, em segundo plano leve ou quando e reaberto.
+- `admin`: gerencia usuários, permissões, obras e pedidos.
+- `compras`: vê pedidos e registra compras.
+- `financeiro`: vê obras e dados financeiros.
+- `obra`: solicita materiais e recebe pedidos nas obras permitidas.
+- `visualizador`: apenas visualiza telas/obras permitidas.
+
+## Fallback local
+
+Com Supabase configurado, o app não persiste obras, pedidos, compras ou dados financeiros completos em `localStorage`. Se a conexão cair, as alterações podem ficar temporariamente na memória da sessão e o usuário é avisado. A sessão permitida do Supabase continua sob controle da própria biblioteca Supabase.

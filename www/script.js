@@ -7,6 +7,17 @@ const MESES_PT = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','N
 const DEFAULT_USERS = [
 ];
 const APP_CONFIG = window.ENGERAMA_CONFIG || {};
+function cloudPrimaryMode() {
+  return !!(APP_CONFIG.supabaseUrl && APP_CONFIG.supabaseAnonKey);
+}
+function isSensitiveStorageKey(key) {
+  return [
+    'engerama_projects_',
+    'engerama_users_',
+    'engerama_insumos_pedidos_',
+    'engerama_insumos_unidades_'
+  ].some(prefix => String(key || '').startsWith(prefix));
+}
 function hashLocalPassword(password) {
   const input = 'engerama-local-v2|' + String(password || '');
   let h1 = 0x811c9dc5;
@@ -54,6 +65,11 @@ let cloudSyncTimer = null;
 let syncInFlight = false;
 
 function loadPersistedJson(key, fallbackKey, fallbackValue, allowEmptyArray = false) {
+  if (cloudPrimaryMode() && isSensitiveStorageKey(key)) {
+    try { localStorage.removeItem(key); } catch(e) {}
+    try { if (fallbackKey) localStorage.removeItem(fallbackKey); } catch(e) {}
+    return fallbackValue;
+  }
   try {
     const raw = localStorage.getItem(key);
     if (raw !== null) {
@@ -73,6 +89,15 @@ function loadPersistedJson(key, fallbackKey, fallbackValue, allowEmptyArray = fa
   return fallbackValue;
 }
 function savePersistedJson(key, backupKey, value, label, silent = false) {
+  if (cloudPrimaryMode() && isSensitiveStorageKey(key)) {
+    try { if (backupKey) localStorage.removeItem(backupKey); } catch(e) {}
+    try { localStorage.removeItem(key); } catch(e) {}
+    if (!syncApplyingRemote && typeof scheduleCloudSync === 'function') scheduleCloudSync();
+    if (!silent && !isNetworkOnline() && typeof showToast === 'function') {
+      showToast('Modo offline temporario: os dados ficam apenas nesta sessao ate o Supabase voltar.', 'warn');
+    }
+    return true;
+  }
   try {
     const previous = localStorage.getItem(key);
     if (previous !== null && backupKey) {
@@ -188,6 +213,7 @@ let deletedProjectUndo = null;
 let activeView = 'obras';
 let viewHistory = [];
 let suppressViewHistory = false;
+let cloudRealtimeUnsubscribe = null;
 
 function backendBaseUrl() {
   return String(APP_CONFIG.apiBaseUrl || '').trim().replace(/\/+$/, '');
@@ -217,6 +243,22 @@ function currentCloudSnapshot() {
     insumoUnits: typeof INSUMO_UNITS !== 'undefined' ? INSUMO_UNITS : [],
     updatedAt: new Date().toISOString()
   };
+}
+function setAuthenticatedUser(user) {
+  if (!user?.username) return false;
+  USERS = normalizeUsers(mergeUsersByUsername(USERS, [user]));
+  currentUser = user.username;
+  document.getElementById('topbar-user').textContent = user.username;
+  document.getElementById('topbar-date').textContent = new Date().toLocaleDateString('pt-BR');
+  document.getElementById('page-login').classList.remove('active');
+  document.getElementById('page-app').classList.add('active');
+  document.body.classList.add('chat-enabled');
+  resetQuickChat();
+  applyNavPermissions();
+  showView(firstAllowedView());
+  pullCloudSync(true);
+  startCloudRealtime();
+  return true;
 }
 function mergeByKey(localItems, remoteItems, keyName) {
   const map = new Map();
@@ -254,18 +296,24 @@ function applyCloudSnapshot(snapshot, renderNow = false) {
   try {
     if (Array.isArray(snapshot.projects)) PROJECTS = mergeByKey(PROJECTS, snapshot.projects, 'id');
     if (Array.isArray(snapshot.users)) USERS = normalizeUsers(mergeUsersByUsername(USERS, snapshot.users));
+    if (snapshot.profile?.username) USERS = normalizeUsers(mergeUsersByUsername(USERS, [snapshot.profile]));
+    if (snapshot.profile?.username && currentUser && String(snapshot.profile.username).toLowerCase() === String(currentUser).toLowerCase()) {
+      currentUser = snapshot.profile.username;
+    }
     if (Array.isArray(snapshot.insumoOrders) && typeof INSUMO_ORDERS !== 'undefined') {
       INSUMO_ORDERS = mergeByKey(INSUMO_ORDERS, snapshot.insumoOrders, 'id');
     }
     if (Array.isArray(snapshot.insumoUnits) && typeof INSUMO_UNITS !== 'undefined') {
       INSUMO_UNITS = Array.from(new Set([...INSUMO_UNITS, ...snapshot.insumoUnits])).filter(Boolean);
     }
-    try { localStorage.setItem(LS_PROJECTS, JSON.stringify(PROJECTS)); } catch(e) {}
-    try { localStorage.setItem(LS_USERS, JSON.stringify(USERS)); } catch(e) {}
-    if (typeof LS_INSUMOS !== 'undefined') {
+    if (!cloudPrimaryMode()) {
+      try { localStorage.setItem(LS_PROJECTS, JSON.stringify(PROJECTS)); } catch(e) {}
+      try { localStorage.setItem(LS_USERS, JSON.stringify(USERS)); } catch(e) {}
+    }
+    if (!cloudPrimaryMode() && typeof LS_INSUMOS !== 'undefined') {
       try { localStorage.setItem(LS_INSUMOS, JSON.stringify(INSUMO_ORDERS)); } catch(e) {}
     }
-    if (typeof LS_INSUMO_UNITS !== 'undefined') {
+    if (!cloudPrimaryMode() && typeof LS_INSUMO_UNITS !== 'undefined') {
       try { localStorage.setItem(LS_INSUMO_UNITS, JSON.stringify(INSUMO_UNITS)); } catch(e) {}
     }
   } finally {
@@ -351,6 +399,31 @@ async function syncWhenPossible(reason = 'auto') {
   if (hasCloudSyncPending()) await pushCloudSync();
   await pullCloudSync(true);
 }
+async function restoreSupabaseSession() {
+  if (!cloudPrimaryMode() || !window.EngeramaAuth?.restoreSession || !window.EngeramaSupabase?.enabled) return false;
+  try {
+    const user = await window.EngeramaAuth.restoreSession();
+    if (!user) return false;
+    return setAuthenticatedUser(user);
+  } catch(e) {
+    console.warn('Sessao Supabase nao restaurada:', e.message);
+    return false;
+  }
+}
+function startCloudRealtime() {
+  if (!window.EngeramaAPI?.subscribeState || cloudRealtimeUnsubscribe) return;
+  let timer = null;
+  cloudRealtimeUnsubscribe = window.EngeramaAPI.subscribeState(() => {
+    clearTimeout(timer);
+    timer = setTimeout(() => pullCloudSync(true), 450);
+  });
+}
+function stopCloudRealtime() {
+  if (typeof cloudRealtimeUnsubscribe === 'function') {
+    try { cloudRealtimeUnsubscribe(); } catch(e) {}
+  }
+  cloudRealtimeUnsubscribe = null;
+}
 async function loginWithBackend(username, password) {
   if (!backendEnabled()) return null;
   if (window.EngeramaSupabase?.enabled && window.EngeramaAuth?.signIn) {
@@ -366,7 +439,6 @@ async function loginWithBackend(username, password) {
       updatedAt: new Date().toISOString(),
       _supabaseAuthenticated: true
     }]));
-    saveUsers();
     await window.EngeramaAuth.ensureProfile(user).catch(() => null);
     await pullCloudSync(false);
     return {...user, _supabaseAuthenticated: true};
@@ -381,6 +453,7 @@ async function loginWithBackend(username, password) {
 
 // ══ STORAGE ══════════════════════════════════════════════════════════════
 function loadProjects() {
+  if (cloudPrimaryMode()) return [];
   try {
     const d = localStorage.getItem(LS_PROJECTS);
     if (d) return JSON.parse(d);
@@ -388,6 +461,10 @@ function loadProjects() {
   return [JSON.parse(JSON.stringify(DEFAULT_PROJECT))];
 }
 function saveProjects() {
+  if (cloudPrimaryMode()) {
+    if (!syncApplyingRemote) scheduleCloudSync();
+    return;
+  }
   try {
     localStorage.setItem(LS_PROJECTS, JSON.stringify(PROJECTS));
     if (!syncApplyingRemote) scheduleCloudSync();
@@ -396,18 +473,19 @@ function saveProjects() {
 function normalizeUsers(users) {
   const allIds = PROJECTS.map(project => project.id);
   return users.map(user => {
-    const admin = user.role === 'admin' || String(user.username || '').toLowerCase() === 'admin';
+    const normalizedRole = user.role === 'viewer' ? 'visualizador' : (user.role || 'visualizador');
+    const admin = normalizedRole === 'admin';
     const savedModules = Array.isArray(user.modules) ? user.modules : ['obras','relatorio','insumos'];
     const modules = admin ? ['obras','relatorio','insumos','usuarios'] : savedModules.filter(module => ['obras','relatorio','insumos'].includes(module));
     const savedProjectIds = Array.isArray(user.projectIds) ? user.projectIds.filter(id => allIds.includes(id)) : [];
-    const allProjects = admin ? true : user.allProjects === true || !savedProjectIds.length;
+    const allProjects = admin ? true : user.allProjects === true || (user.allProjects !== false && !savedProjectIds.length);
     return {
       id: user.id,
       email: user.email,
       username: user.username,
       passwordHash: user.passwordHash || (user.password ? hashLocalPassword(user.password) : ''),
       phone: user.phone || user.celular || '',
-      role: admin ? 'admin' : (user.role || 'viewer'),
+      role: admin ? 'admin' : normalizedRole,
       active: user.active !== false,
       allProjects,
       projectIds: admin || allProjects ? [] : savedProjectIds,
@@ -418,7 +496,9 @@ function normalizeUsers(users) {
 function loadUsers() {
   const fallback = JSON.parse(JSON.stringify(DEFAULT_USERS));
   const normalized = normalizeUsers(loadPersistedJson(LS_USERS, LS_USERS_BACKUP, fallback, true));
-  try { localStorage.setItem(LS_USERS, JSON.stringify(sanitizeUsersForStorage(normalized))); } catch(e) {}
+  if (!cloudPrimaryMode()) {
+    try { localStorage.setItem(LS_USERS, JSON.stringify(sanitizeUsersForStorage(normalized))); } catch(e) {}
+  }
   try { localStorage.removeItem(LS_USERS_BACKUP); } catch(e) {}
   return normalized;
 }
@@ -441,7 +521,7 @@ function userHasModule(module) {
   if (!user) return false;
   if (module === 'usuarios') return isAdmin();
   if (user.role === 'admin') return true;
-  const modules = Array.isArray(user.modules) ? user.modules : ['obras','relatorio','insumos'];
+  const modules = Array.isArray(user.modules) ? user.modules : [];
   return modules.includes(module);
 }
 function firstAllowedView() {
@@ -449,7 +529,7 @@ function firstAllowedView() {
   if (userHasModule('insumos')) return 'insumos';
   if (userHasModule('relatorio')) return 'relatorio';
   if (isAdmin()) return 'obras';
-  return 'insumos';
+  return '';
 }
 function applyNavPermissions() {
   const permissions = {
@@ -468,9 +548,10 @@ function applyNavPermissions() {
 }
 function visibleProjects() {
   const user = currentUserData();
-  if (!user || user.role === 'admin' || user.allProjects) return PROJECTS;
+  if (!user) return [];
+  if (user.role === 'admin' || user.allProjects === true) return PROJECTS;
   const allowed = new Set(user.projectIds || []);
-  if (!allowed.size) return PROJECTS;
+  if (!allowed.size) return [];
   return PROJECTS.filter(project => allowed.has(project.id));
 }
 function getProject(id) { return visibleProjects().find(p => p.id === id); }
@@ -482,31 +563,38 @@ async function doLogin() {
   const p = document.getElementById('inp-pass').value;
   const err = document.getElementById('login-err');
   let user = null;
+  if (cloudPrimaryMode() && !isNetworkOnline()) {
+    showToast('Sem internet. Login online indisponivel no momento.', 'error');
+    err.style.display = 'block';
+    return;
+  }
+  if (cloudPrimaryMode() && !backendEnabled()) {
+    showToast('Supabase nao configurado ou biblioteca indisponivel.', 'error');
+    err.style.display = 'block';
+    return;
+  }
   if (backendEnabled()) {
     try {
       user = await loginWithBackend(u, p);
     } catch(e) {
+      if (cloudPrimaryMode()) {
+        showToast('Login online indisponivel ou sem permissao no Supabase.', 'error');
+        err.style.display = 'block';
+        return;
+      }
       showToast('Backend indisponivel. Tentando login local.', 'warn');
     }
   }
-  user = user ? findUser(user.username || u) || user : findUser(u);
+  user = user?._supabaseAuthenticated ? user : (user ? findUser(user.username || u) || user : findUser(u));
   if (user && userPasswordMatches(user, p) && user.active !== false) {
     err.style.display = 'none';
-    currentUser = user.username;
-    document.getElementById('topbar-user').textContent = user.username;
-    document.getElementById('topbar-date').textContent = new Date().toLocaleDateString('pt-BR');
-    document.getElementById('page-login').classList.remove('active');
-    document.getElementById('page-app').classList.add('active');
-    document.body.classList.add('chat-enabled');
-    resetQuickChat();
-    applyNavPermissions();
-    showView(firstAllowedView());
-    pullCloudSync(true);
+    setAuthenticatedUser(user);
   } else {
     err.style.display = 'block';
   }
 }
 function doLogout() {
+  stopCloudRealtime();
   window.EngeramaAuth?.signOut?.().catch(() => null);
   document.getElementById('page-app').classList.remove('active');
   document.getElementById('page-login').classList.add('active');
@@ -527,6 +615,35 @@ function showView(v) {
   if (v !== 'detail' && v !== 'usuarios' && !userHasModule(v)) v = firstAllowedView();
   if (v === 'usuarios' && !isAdmin()) v = firstAllowedView();
   if (v === 'detail' && !userHasModule('obras')) v = firstAllowedView();
+  if (!v) {
+    activeView = '';
+    ['obras','relatorio','insumos','usuarios'].forEach(id => {
+      const el = document.getElementById('view-' + id);
+      if (el) {
+        el.classList.remove('vactive');
+        el.style.display = 'none';
+      }
+    });
+    const det = document.getElementById('view-detail');
+    if (det) {
+      det.classList.remove('vactive');
+      det.style.display = 'none';
+    }
+    const topbar = document.getElementById('topbar');
+    if (topbar) topbar.style.display = 'flex';
+    document.getElementById('topbar-path').textContent = 'Sem acesso';
+    let noAccess = document.getElementById('view-no-access');
+    if (!noAccess) {
+      noAccess = document.createElement('div');
+      noAccess.id = 'view-no-access';
+      noAccess.className = 'view-section vactive';
+      document.getElementById('main-content')?.appendChild(noAccess);
+    }
+    noAccess.style.display = 'block';
+    noAccess.innerHTML = '<div class="view-wrap"><div class="empty-state"><p>Seu usuário não possui telas liberadas.</p><small>Peça para um administrador ajustar seus módulos de acesso.</small></div></div>';
+    updateBackButton();
+    return;
+  }
   if (!suppressViewHistory && activeView && activeView !== v) {
     viewHistory.push(activeView);
     if (viewHistory.length > 12) viewHistory.shift();
@@ -538,6 +655,11 @@ function showView(v) {
     el.classList.remove('vactive');
     el.style.display = 'none';
   });
+  const noAccess = document.getElementById('view-no-access');
+  if (noAccess) {
+    noAccess.classList.remove('vactive');
+    noAccess.style.display = 'none';
+  }
   const det = document.getElementById('view-detail');
   det.classList.remove('vactive');
   det.style.display = 'none';
@@ -1676,12 +1798,13 @@ function renderUsers() {
   const tbody = document.getElementById('users-tbody');
   if (!tbody) return;
   const moduleLabels = {obras:'Obras', relatorio:'Relatorio', insumos:'Insumos'};
+  const roleLabels = {admin:'Administrador', compras:'Compras', financeiro:'Financeiro', obra:'Obra', visualizador:'Visualizador', viewer:'Visualizador'};
   tbody.innerHTML = USERS.map(user => {
     const userModules = user.modules || ['obras','relatorio','insumos'];
     const modules = user.role === 'admin' ? 'Todos' : userModules.map(module => moduleLabels[module]).filter(Boolean).join(', ') || 'Nenhum';
     const needsProjects = user.role !== 'admin' && userModules.includes('obras');
     const obras = user.role === 'admin' || user.allProjects ? 'Todas' : needsProjects ? ((user.projectIds || []).map(id => PROJECTS.find(p => p.id === id)?.nome).filter(Boolean).join(', ') || 'Nenhuma') : 'Nao se aplica';
-    return `<tr><td style="text-align:left"><b>${escHtml(user.username)}</b><div class="insumo-meta">${escHtml(user.phone || 'Sem celular')}</div></td><td style="text-align:left">${user.role === 'admin' ? '<span style="color:#f0c000">Administrador</span>' : '<span style="color:#4fc3f7">Visualizador</span>'}</td><td>${escHtml(modules)}</td><td>${escHtml(obras)}</td><td><span class="status-pill ${user.active!==false?'status-pos':'status-neg'}">${user.active!==false?'Ativo':'Inativo'}</span></td><td><button class="btn-action" onclick="editUser('${escHtml(user.username)}')">Editar</button><button class="btn-action" onclick="deleteUser('${escHtml(user.username)}')">Apagar</button></td></tr>`;
+    return `<tr><td style="text-align:left"><b>${escHtml(user.username)}</b><div class="insumo-meta">${escHtml(user.phone || 'Sem celular')}</div></td><td style="text-align:left">${user.role === 'admin' ? '<span style="color:#f0c000">Administrador</span>' : '<span style="color:#4fc3f7">' + escHtml(roleLabels[user.role] || user.role || 'Visualizador') + '</span>'}</td><td>${escHtml(modules)}</td><td>${escHtml(obras)}</td><td><span class="status-pill ${user.active!==false?'status-pos':'status-neg'}">${user.active!==false?'Ativo':'Inativo'}</span></td><td><button class="btn-action" onclick="editUser('${escHtml(user.username)}')">Editar</button><button class="btn-action" onclick="deleteUser('${escHtml(user.username)}')">Apagar</button></td></tr>`;
   }).join('');
   renderUserProjectOptions(true);
 }
@@ -1695,7 +1818,7 @@ function renderUserProjectOptions(forceFromSaved = false) {
   const box = document.getElementById('user-project-access');
   const moduleBox = document.getElementById('user-module-access');
   if (!box) return;
-  const role = document.getElementById('user-form-role')?.value || 'viewer';
+  const role = document.getElementById('user-form-role')?.value || 'visualizador';
   const original = document.getElementById('user-edit-original')?.value;
   const editing = original ? findUser(original) : null;
   const defaultModules = ['obras','relatorio','insumos'];
@@ -1731,19 +1854,23 @@ function renderUserProjectOptions(forceFromSaved = false) {
 }
 function resetUserForm() {
   ['user-edit-original','user-form-username','user-form-phone','user-form-password','user-form-admin-password'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
-  document.getElementById('user-form-role').value = 'viewer';
+  document.getElementById('user-form-role').value = 'visualizador';
   document.getElementById('user-form-active').value = 'true';
   document.getElementById('user-form-msg').textContent = '';
   document.querySelectorAll('#user-module-access input').forEach(input => { input.checked = true; });
   renderUserProjectOptions(true);
 }
 function editUser(username) {
+  if (!isAdmin()) {
+    showToast('Apenas administradores podem gerenciar usuários.', 'error');
+    return;
+  }
   const user = findUser(username);
   if (!user) return;
   document.getElementById('user-edit-original').value = user.username;
   document.getElementById('user-form-username').value = user.username;
   document.getElementById('user-form-phone').value = user.phone || '';
-  document.getElementById('user-form-role').value = user.role;
+  document.getElementById('user-form-role').value = user.role === 'viewer' ? 'visualizador' : user.role;
   document.getElementById('user-form-active').value = String(user.active !== false);
   document.getElementById('user-form-password').value = '';
   document.getElementById('user-form-admin-password').value = '';
@@ -1752,6 +1879,10 @@ function editUser(username) {
 function adminPasswordMatches(password){return USERS.some(user=>user.role==='admin'&&user.active!==false&&userPasswordMatches(user, password));}
 function saveUser(event) {
   event.preventDefault();
+  if (!isAdmin()) {
+    showToast('Apenas administradores podem gerenciar usuários.', 'error');
+    return;
+  }
   const original = document.getElementById('user-edit-original').value;
   const existing = original ? findUser(original) : null;
   const username = document.getElementById('user-form-username').value.trim();
@@ -1765,12 +1896,13 @@ function saveUser(event) {
   const modules = role === 'admin' ? ['obras','relatorio','insumos','usuarios'] : Array.from(document.querySelectorAll('#user-module-access input:checked')).map(input => input.value);
   const needsProjectSelection = role !== 'admin' && modules.includes('obras');
   const allProjects = role === 'admin' || !needsProjectSelection || document.getElementById('user-project-all')?.checked !== false;
+  if (cloudPrimaryMode() && !existing) { msg.textContent = 'Crie primeiro o acesso em Supabase Auth. Depois ajuste as permissoes aqui.'; return; }
   if (!username) { msg.textContent = 'Informe o usuário.'; return; }
   if (findUser(username) && findUser(username) !== existing) { msg.textContent = 'Já existe um usuário com esse login.'; return; }
   if (role !== 'admin' && !normalizePhoneForWhatsApp(phone)) { msg.textContent = 'Informe o celular/WhatsApp do usuário.'; return; }
   if (role !== 'admin' && !modules.length) { msg.textContent = 'Escolha pelo menos uma tela para o visualizador.'; return; }
   if (needsProjectSelection && !allProjects && !projectIds.length) { msg.textContent = 'Selecione uma obra ou marque Todas as obras.'; return; }
-  if ((!existing || newPassword) && !adminPasswordMatches(adminPassword)) { msg.textContent = 'Confirme a senha de administrador para criar ou trocar senha.'; return; }
+  if (!cloudPrimaryMode() && (!existing || newPassword) && !adminPasswordMatches(adminPassword)) { msg.textContent = 'Confirme a senha de administrador para criar ou trocar senha.'; return; }
   if (!existing && !newPassword) { msg.textContent = 'Informe uma senha para o novo usuário.'; return; }
   if (existing) {
     existing.username = existing.username.toLowerCase() === 'admin' ? existing.username : username;
@@ -1780,7 +1912,7 @@ function saveUser(event) {
     existing.allProjects = existing.role === 'admin' ? true : allProjects;
     existing.projectIds = existing.role === 'admin' || allProjects ? [] : projectIds;
     existing.modules = existing.role === 'admin' ? ['obras','relatorio','insumos','usuarios'] : modules;
-    if (newPassword) existing.passwordHash = hashLocalPassword(newPassword);
+    if (!cloudPrimaryMode() && newPassword) existing.passwordHash = hashLocalPassword(newPassword);
     existing.updatedAt = new Date().toISOString();
   } else {
     USERS.push({username, passwordHash:hashLocalPassword(newPassword), phone, role, active, allProjects, projectIds:allProjects ? [] : projectIds, modules, updatedAt:new Date().toISOString()});
@@ -1788,14 +1920,35 @@ function saveUser(event) {
   if (!saveUsers()) return;
   renderUsers(); resetUserForm(); msg.textContent = 'Usuário salvo com sucesso.';
 }
-function deleteUser(username) {
+async function deleteUser(username) {
+  if (!isAdmin()) {
+    showToast('Apenas administradores podem gerenciar usuários.', 'error');
+    return;
+  }
   if (username === currentUser) { showToast('Você não pode apagar o usuário logado.', 'error'); return; }
   if (username.toLowerCase() === 'admin') { showToast('O admin principal não pode ser apagado.', 'error'); return; }
-  const pass = prompt('Digite a senha de administrador para apagar este usuário:');
-  if (!adminPasswordMatches(pass)) { showToast('Senha de administrador incorreta.', 'error'); return; }
+  const targetUser = findUser(username);
+  if (!cloudPrimaryMode()) {
+    const pass = prompt('Digite a senha de administrador para apagar este usuário:');
+    if (!adminPasswordMatches(pass)) { showToast('Senha de administrador incorreta.', 'error'); return; }
+  }
   if (!confirm('Apagar o usuário "' + username + '"?')) return;
   const previousUsers = USERS.slice();
   USERS = USERS.filter(user => user.username !== username);
+  if (cloudPrimaryMode() && window.EngeramaAPI?.deleteUsuario && targetUser?.id) {
+    try {
+      const state = await window.EngeramaAPI.deleteUsuario(targetUser.id);
+      applyCloudSnapshot(state, true);
+      renderUsers();
+      resetUserForm();
+      showToast('Usuário apagado no Supabase.', 'success');
+      return;
+    } catch(e) {
+      USERS = previousUsers;
+      showToast('Não foi possível apagar no Supabase: ' + e.message, 'error');
+      return;
+    }
+  }
   if (!saveUsers()) {
     USERS = previousUsers;
     return;
@@ -2112,6 +2265,7 @@ function loadInsumoUnits() {
   return DEFAULT_INSUMO_UNITS.slice();
 }
 function saveInsumoUnits() {
+  if (cloudPrimaryMode()) return;
   try { localStorage.setItem(LS_INSUMO_UNITS, JSON.stringify(INSUMO_UNITS)); } catch(e) {}
 }
 function insumoId() {
@@ -3484,11 +3638,24 @@ function exportInsumoPedidoPdf(id, options = {}) {
   return downloaded;
 }
 
-function deleteInsumoPedido(id) {
+async function deleteInsumoPedido(id) {
   if (!isAdmin()) return;
   if (!confirm('Apagar este pedido de material?')) return;
   const previousOrders = INSUMO_ORDERS.slice();
   INSUMO_ORDERS = INSUMO_ORDERS.filter(item => item.id !== id);
+  if (cloudPrimaryMode() && window.EngeramaAPI?.deletePedido) {
+    try {
+      const state = await window.EngeramaAPI.deletePedido(id);
+      applyCloudSnapshot(state, true);
+      showToast('Pedido apagado no Supabase.', 'success');
+      renderInsumos();
+      return;
+    } catch(e) {
+      INSUMO_ORDERS = previousOrders;
+      showToast('Não foi possível apagar no Supabase: ' + e.message, 'error');
+      return;
+    }
+  }
   if (!saveInsumoOrders()) {
     INSUMO_ORDERS = previousOrders;
     return;
@@ -3497,7 +3664,7 @@ function deleteInsumoPedido(id) {
   renderInsumos();
 }
 
-function deleteAllInsumoPedidos() {
+async function deleteAllInsumoPedidos() {
   if (!isAdmin()) {
     showToast('Apenas administradores podem apagar todos os pedidos.', 'error');
     return;
@@ -3506,15 +3673,30 @@ function deleteAllInsumoPedidos() {
     showToast('Nenhum pedido para apagar.', 'warn');
     return;
   }
-  const adminPass = prompt('Digite a senha do administrador para apagar todos os pedidos:');
-  if (!adminPasswordMatches(adminPass)) {
-    showToast('Senha de administrador incorreta.', 'error');
-    return;
+  if (!cloudPrimaryMode()) {
+    const adminPass = prompt('Digite a senha do administrador para apagar todos os pedidos:');
+    if (!adminPasswordMatches(adminPass)) {
+      showToast('Senha de administrador incorreta.', 'error');
+      return;
+    }
   }
   const total = INSUMO_ORDERS.length;
   if (!confirm('Apagar TODOS os ' + total + ' pedido(s) de insumos? Esta acao nao pode ser desfeita.')) return;
   const previousOrders = INSUMO_ORDERS.slice();
   INSUMO_ORDERS = [];
+  if (cloudPrimaryMode() && window.EngeramaAPI?.deleteTodosPedidos) {
+    try {
+      const state = await window.EngeramaAPI.deleteTodosPedidos();
+      applyCloudSnapshot(state, true);
+      showToast(total + ' pedido(s) apagado(s) no Supabase.', 'success');
+      renderInsumos();
+      return;
+    } catch(e) {
+      INSUMO_ORDERS = previousOrders;
+      showToast('Não foi possível apagar no Supabase: ' + e.message, 'error');
+      return;
+    }
+  }
   if (!saveInsumoOrders()) {
     INSUMO_ORDERS = previousOrders;
     return;
@@ -3901,11 +4083,12 @@ async function initPushNotifications() {
     console.warn('Push notifications nao configuradas:', e.message);
   }
 }
-function initAppRuntime() {
+async function initAppRuntime() {
   setTimeout(hideSplash, 650);
   updateBackButton();
+  const restored = await restoreSupabaseSession();
   if (backendEnabled()) {
-    syncWhenPossible('inicio');
+    if (restored) syncWhenPossible('inicio');
     setInterval(() => syncWhenPossible('intervalo'), Number(APP_CONFIG.offlineSyncIntervalMs) || 15000);
     window.addEventListener('online', () => {
       if (typeof showToast === 'function') showToast('Internet voltou. Sincronizando dados...', 'success');
