@@ -152,6 +152,13 @@
     if (error) throw error;
     return true;
   }
+  async function updatePassword(newPassword) {
+    const sb = client();
+    if (!sb) throw new Error('Supabase indisponivel');
+    const { data, error } = await sb.auth.updateUser({ password: newPassword });
+    if (error) throw error;
+    return data.user || null;
+  }
   async function signOut() {
     const sb = client();
     if (!sb) return;
@@ -175,6 +182,7 @@
     signIn,
     restoreSession,
     resetPassword,
+    updatePassword,
     signOut,
     onAuthStateChange,
     ensureProfile,

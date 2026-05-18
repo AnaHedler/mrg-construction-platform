@@ -700,6 +700,47 @@ async function doFirstAdminSignUp() {
     showToast('Não foi possível criar acesso: ' + e.message, 'error');
   }
 }
+function openMyPasswordModal() {
+  document.getElementById('my-password-new').value = '';
+  document.getElementById('my-password-confirm').value = '';
+  const msg = document.getElementById('my-password-msg');
+  if (msg) {
+    msg.textContent = '';
+    msg.style.display = 'none';
+  }
+  document.getElementById('modal-minha-senha')?.classList.add('open');
+}
+function closeMyPasswordModal() {
+  document.getElementById('modal-minha-senha')?.classList.remove('open');
+}
+async function saveMyPassword() {
+  const msg = document.getElementById('my-password-msg');
+  const password = document.getElementById('my-password-new').value;
+  const confirm = document.getElementById('my-password-confirm').value;
+  if (msg) {
+    msg.textContent = '';
+    msg.style.display = 'none';
+  }
+  if (!password || password.length < 6) {
+    if (msg) { msg.textContent = 'Informe uma senha com pelo menos 6 caracteres.'; msg.style.display = 'block'; }
+    return;
+  }
+  if (password !== confirm) {
+    if (msg) { msg.textContent = 'As senhas não conferem.'; msg.style.display = 'block'; }
+    return;
+  }
+  if (!cloudPrimaryMode() || !window.EngeramaAuth?.updatePassword) {
+    if (msg) { msg.textContent = 'Troca de senha exige login pelo Supabase.'; msg.style.display = 'block'; }
+    return;
+  }
+  try {
+    await window.EngeramaAuth.updatePassword(password);
+    closeMyPasswordModal();
+    showToast('Senha alterada com sucesso.', 'success');
+  } catch(e) {
+    if (msg) { msg.textContent = 'Não foi possível alterar a senha: ' + e.message; msg.style.display = 'block'; }
+  }
+}
 async function doLogout() {
   stopCloudRealtime();
   manualLogoutInProgress = true;
@@ -2004,14 +2045,28 @@ async function saveUser(event) {
   const modules = role === 'admin' ? ['obras','relatorio','insumos','usuarios'] : Array.from(document.querySelectorAll('#user-module-access input:checked')).map(input => input.value);
   const needsProjectSelection = role !== 'admin' && modules.includes('obras');
   const allProjects = role === 'admin' || !needsProjectSelection || document.getElementById('user-project-all')?.checked !== false;
-  if (cloudPrimaryMode() && !existing && !newPassword) { msg.textContent = 'Informe uma senha temporária para criar o acesso no Supabase Auth.'; return; }
   if (!username) { msg.textContent = 'Informe o usuário.'; return; }
   if (findUser(username) && findUser(username) !== existing) { msg.textContent = 'Já existe um usuário com esse login.'; return; }
   if (role !== 'admin' && !normalizePhoneForWhatsApp(phone)) { msg.textContent = 'Informe o celular/WhatsApp do usuário.'; return; }
   if (role !== 'admin' && !modules.length) { msg.textContent = 'Escolha pelo menos uma tela para o visualizador.'; return; }
   if (needsProjectSelection && !allProjects && !projectIds.length) { msg.textContent = 'Selecione uma obra ou marque Todas as obras.'; return; }
   if (!cloudPrimaryMode() && (!existing || newPassword) && !adminPasswordMatches(adminPassword)) { msg.textContent = 'Confirme a senha de administrador para criar ou trocar senha.'; return; }
-  if (!existing && !newPassword) { msg.textContent = 'Informe uma senha para o novo usuário.'; return; }
+  if (!existing && !newPassword && !cloudPrimaryMode()) { msg.textContent = 'Informe uma senha para o novo usuário.'; return; }
+  if (existing && cloudPrimaryMode() && newPassword) {
+    const current = currentUserData();
+    const sameUser = existing.id && current?.id ? existing.id === current.id : String(existing.username).toLowerCase() === String(currentUser).toLowerCase();
+    if (!sameUser) {
+      msg.textContent = 'Por segurança, o admin não altera senha de outro usuário no app. Use recuperação de senha ou peça para o usuário trocar em Minha senha.';
+      return;
+    }
+    try {
+      await window.EngeramaAuth.updatePassword(newPassword);
+      showToast('Sua senha foi alterada.', 'success');
+    } catch(e) {
+      msg.textContent = 'Não foi possível alterar sua senha: ' + e.message;
+      return;
+    }
+  }
   if (existing) {
     existing.username = existing.username.toLowerCase() === 'admin' ? existing.username : username;
     existing.role = existing.username.toLowerCase() === 'admin' ? 'admin' : role;
@@ -2024,24 +2079,67 @@ async function saveUser(event) {
     existing.updatedAt = new Date().toISOString();
   } else if (cloudPrimaryMode()) {
     try {
-      const signup = await window.EngeramaAuth.signUp(username, newPassword, { username, phone, telefone: phone });
-      if (!signup.user?.id) throw new Error('Supabase não retornou o usuário criado.');
-      USERS.push({
-        id: signup.user.id,
-        email: signup.user.email || window.EngeramaAuth.emailFromLogin(username),
-        username,
-        phone,
-        role,
-        active,
-        allProjects,
-        projectIds: allProjects ? [] : projectIds,
-        modules,
-        updatedAt: new Date().toISOString(),
-        _supabaseAuthenticated: false
-      });
-      if (signup.emailConfirmationRequired) showToast('Usuário criado no Auth. Ele precisa confirmar o e-mail antes do primeiro login.', 'warn');
+      if (newPassword) {
+        const signup = await window.EngeramaAuth.signUp(username, newPassword, { username, phone, telefone: phone });
+        if (!signup.user?.id) throw new Error('Supabase não retornou o usuário criado.');
+        USERS.push({
+          id: signup.user.id,
+          email: signup.user.email || window.EngeramaAuth.emailFromLogin(username),
+          username,
+          phone,
+          role,
+          active,
+          allProjects,
+          projectIds: allProjects ? [] : projectIds,
+          modules,
+          updatedAt: new Date().toISOString(),
+          _supabaseAuthenticated: false
+        });
+        if (signup.emailConfirmationRequired) showToast('Usuário criado no Auth. Ele precisa confirmar o e-mail antes do primeiro login.', 'warn');
+      } else if (window.EngeramaAPI?.upsertUsuarioPorEmail) {
+        const state = await window.EngeramaAPI.upsertUsuarioPorEmail({
+          email: username,
+          username,
+          phone,
+          role,
+          active,
+          allProjects,
+          projectIds: allProjects ? [] : projectIds,
+          modules
+        });
+        applyCloudSnapshot(state, true);
+        renderUsers();
+        resetUserForm();
+        msg.textContent = 'Usuário vinculado ao Supabase Auth com sucesso.';
+        return;
+      } else {
+        throw new Error('Informe uma senha temporária para criar o acesso no Supabase Auth.');
+      }
     } catch(e) {
-      msg.textContent = 'Não foi possível criar no Supabase Auth: ' + e.message;
+      const reason = String(e.message || '');
+      if (/already|registered|exists|User already/i.test(reason) && window.EngeramaAPI?.upsertUsuarioPorEmail) {
+        try {
+          const state = await window.EngeramaAPI.upsertUsuarioPorEmail({
+            email: username,
+            username,
+            phone,
+            role,
+            active,
+            allProjects,
+            projectIds: allProjects ? [] : projectIds,
+            modules
+          });
+          applyCloudSnapshot(state, true);
+          renderUsers();
+          resetUserForm();
+          msg.textContent = 'Usuário já existia no Auth e foi vinculado às permissões.';
+          return;
+        } catch(rpcError) {
+          msg.textContent = 'Usuário existe no Auth, mas não foi possível vincular. Rode a função admin_upsert_usuario_por_email no Supabase. Detalhe: ' + rpcError.message;
+          return;
+        }
+      }
+      msg.textContent = 'Não foi possível criar/vincular no Supabase Auth: ' + reason;
       return;
     }
   } else {

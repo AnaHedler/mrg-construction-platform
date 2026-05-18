@@ -221,6 +221,88 @@ as $$
   );
 $$;
 
+create or replace function public.admin_upsert_usuario_por_email(
+  p_email text,
+  p_username text,
+  p_nome text,
+  p_telefone text,
+  p_perfil public.usuario_perfil,
+  p_ativo boolean,
+  p_todas_obras boolean,
+  p_obras_permitidas uuid[],
+  p_modulos text[]
+)
+returns public.usuarios
+language plpgsql
+security definer
+set search_path = public, auth
+as $$
+declare
+  v_empresa_id uuid;
+  v_auth_id uuid;
+  v_usuario public.usuarios;
+begin
+  if not public.is_admin() then
+    raise exception 'Apenas administradores podem vincular usuarios.';
+  end if;
+
+  select empresa_id into v_empresa_id
+  from public.usuarios
+  where id = auth.uid()
+    and ativo = true
+  limit 1;
+
+  if v_empresa_id is null then
+    raise exception 'Administrador sem empresa ativa.';
+  end if;
+
+  select id into v_auth_id
+  from auth.users
+  where lower(email) = lower(trim(p_email))
+  limit 1;
+
+  if v_auth_id is null then
+    raise exception 'AUTH_USER_NOT_FOUND: crie o acesso no Supabase Auth ou informe uma senha temporaria no app.';
+  end if;
+
+  insert into public.usuarios (
+    id, empresa_id, username, nome, email, telefone, perfil, ativo,
+    todas_obras, obras_permitidas, modulos
+  )
+  values (
+    v_auth_id,
+    v_empresa_id,
+    coalesce(nullif(trim(p_username), ''), trim(p_email)),
+    coalesce(nullif(trim(p_nome), ''), nullif(trim(p_username), ''), trim(p_email)),
+    trim(p_email),
+    nullif(trim(p_telefone), ''),
+    p_perfil,
+    coalesce(p_ativo, true),
+    coalesce(p_todas_obras, false),
+    coalesce(p_obras_permitidas, '{}'::uuid[]),
+    coalesce(p_modulos, '{}'::text[])
+  )
+  on conflict (id) do update set
+    username = excluded.username,
+    nome = excluded.nome,
+    email = excluded.email,
+    telefone = excluded.telefone,
+    perfil = excluded.perfil,
+    ativo = excluded.ativo,
+    todas_obras = excluded.todas_obras,
+    obras_permitidas = excluded.obras_permitidas,
+    modulos = excluded.modulos,
+    updated_at = now()
+  returning * into v_usuario;
+
+  return v_usuario;
+end;
+$$;
+
+grant execute on function public.admin_upsert_usuario_por_email(
+  text, text, text, text, public.usuario_perfil, boolean, boolean, uuid[], text[]
+) to authenticated;
+
 drop trigger if exists empresas_touch_updated_at on public.empresas;
 create trigger empresas_touch_updated_at before update on public.empresas
 for each row execute function public.touch_updated_at();

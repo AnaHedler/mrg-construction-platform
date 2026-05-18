@@ -413,6 +413,36 @@
     if (error) throw error;
     return fetchState();
   }
+  async function upsertUsuarioPorEmail(user) {
+    const client = sb();
+    const currentProfile = await profile();
+    if (!canWriteUsers(currentProfile)) {
+      throw new Error('Apenas administradores podem gerenciar usuarios.');
+    }
+    const companyId = empresaId(currentProfile);
+    const { data: obrasData, error: obrasError } = await client
+      .from('obras')
+      .select('id,codigo_externo')
+      .eq('empresa_id', companyId);
+    if (obrasError) throw obrasError;
+    const obraMap = new Map((obrasData || []).map(row => [row.codigo_externo, row.id]));
+    const permitted = Array.isArray(user.projectIds)
+      ? user.projectIds.map(id => obraMap.get(id) || id).filter(Boolean)
+      : [];
+    const { error } = await client.rpc('admin_upsert_usuario_por_email', {
+      p_email: user.email || user.username,
+      p_username: user.username || user.email,
+      p_nome: user.nome || user.username || user.email,
+      p_telefone: user.phone || '',
+      p_perfil: roleToDb(user.role),
+      p_ativo: user.active !== false,
+      p_todas_obras: user.allProjects === true,
+      p_obras_permitidas: permitted,
+      p_modulos: Array.isArray(user.modules) ? user.modules : defaultModulesForRole(user.role)
+    });
+    if (error) throw error;
+    return fetchState();
+  }
   async function deletePedido(orderId) {
     const client = sb();
     const currentProfile = await profile();
@@ -446,6 +476,7 @@
     syncState,
     subscribeState,
     deleteUsuario,
+    upsertUsuarioPorEmail,
     deletePedido,
     deleteTodosPedidos
   };
