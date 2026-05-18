@@ -31,7 +31,7 @@ O campo `owner_id` continua salvo apenas para auditoria de quem criou ou enviou 
 ## Seguranca
 
 - O frontend usa somente anon/publishable key.
-- Nunca coloque `service_role` no app.
+- Nunca coloque chave privilegiada no app.
 - RLS esta ativado e forcado em `organizations`, `profiles` e `app_records`.
 - Todas as policies usam `auth.uid()`.
 - Usuarios autenticados acessam somente dados da propria organizacao.

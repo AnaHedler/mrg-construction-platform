@@ -5,10 +5,36 @@ const LS_USERS = 'engerama_users_v2';
 const LS_USERS_BACKUP = 'engerama_users_v2_backup';
 const MESES_PT = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
 const DEFAULT_USERS = [
-  {username:'admin', password:'admin123', role:'admin', active:true, allProjects:true, projectIds:[]},
-  {username:'LUAN', password:'@123', role:'viewer', active:true, allProjects:false, projectIds:['sjp-001']},
 ];
 const APP_CONFIG = window.ENGERAMA_CONFIG || {};
+function hashLocalPassword(password) {
+  const input = 'engerama-local-v2|' + String(password || '');
+  let h1 = 0x811c9dc5;
+  let h2 = 0x45d9f3b;
+  for (let i = 0; i < input.length; i++) {
+    const code = input.charCodeAt(i);
+    h1 ^= code;
+    h1 = Math.imul(h1, 0x01000193) >>> 0;
+    h2 ^= code + i;
+    h2 = Math.imul(h2, 0x27d4eb2d) >>> 0;
+  }
+  return 'local-v2:' + h1.toString(36).padStart(7, '0') + h2.toString(36).padStart(7, '0');
+}
+function stripSensitiveUserFields(user) {
+  const copy = { ...(user || {}) };
+  if (!copy.passwordHash && copy.password) copy.passwordHash = hashLocalPassword(copy.password);
+  delete copy.password;
+  delete copy._supabaseAuthenticated;
+  return copy;
+}
+function sanitizeUsersForStorage(users) {
+  return (Array.isArray(users) ? users : []).map(stripSensitiveUserFields);
+}
+function userPasswordMatches(user, password) {
+  if (!user) return false;
+  if (user._supabaseAuthenticated) return true;
+  return !!user.passwordHash && user.passwordHash === hashLocalPassword(password);
+}
 const LS_SYNC_PENDING = 'engerama_sync_pending_v1';
 const LS_LAST_SYNC = 'engerama_last_sync_v1';
 const ENGERAMA_CLIENT_ID = (() => {
@@ -186,7 +212,7 @@ async function backendRequest(path, options = {}) {
 function currentCloudSnapshot() {
   return {
     projects: PROJECTS,
-    users: USERS,
+    users: sanitizeUsersForStorage(USERS),
     insumoOrders: typeof INSUMO_ORDERS !== 'undefined' ? INSUMO_ORDERS : [],
     insumoUnits: typeof INSUMO_UNITS !== 'undefined' ? INSUMO_UNITS : [],
     updatedAt: new Date().toISOString()
@@ -216,7 +242,7 @@ function mergeUsersByUsername(localUsers, remoteUsers) {
     byName.set(key, {
       ...local,
       ...user,
-      password: local.password || user.password || '',
+      passwordHash: local.passwordHash || user.passwordHash || (local.password ? hashLocalPassword(local.password) : '') || (user.password ? hashLocalPassword(user.password) : ''),
       updatedAt: user.updatedAt || local.updatedAt || new Date().toISOString()
     });
   });
@@ -331,7 +357,6 @@ async function loginWithBackend(username, password) {
     const user = await window.EngeramaAuth.signIn(username, password);
     USERS = normalizeUsers(mergeUsersByUsername(USERS, [{
       username: user.username,
-      password,
       phone: user.phone,
       role: user.role,
       active: user.active,
@@ -344,7 +369,7 @@ async function loginWithBackend(username, password) {
     saveUsers();
     await window.EngeramaAuth.ensureProfile(user).catch(() => null);
     await pullCloudSync(false);
-    return {...user, password, _supabaseAuthenticated: true};
+    return {...user, _supabaseAuthenticated: true};
   }
   const data = await backendRequest('/api/login', {
     method: 'POST',
@@ -377,8 +402,10 @@ function normalizeUsers(users) {
     const savedProjectIds = Array.isArray(user.projectIds) ? user.projectIds.filter(id => allIds.includes(id)) : [];
     const allProjects = admin ? true : user.allProjects === true || !savedProjectIds.length;
     return {
+      id: user.id,
+      email: user.email,
       username: user.username,
-      password: user.password || '',
+      passwordHash: user.passwordHash || (user.password ? hashLocalPassword(user.password) : ''),
       phone: user.phone || user.celular || '',
       role: admin ? 'admin' : (user.role || 'viewer'),
       active: user.active !== false,
@@ -390,9 +417,13 @@ function normalizeUsers(users) {
 }
 function loadUsers() {
   const fallback = JSON.parse(JSON.stringify(DEFAULT_USERS));
-  return normalizeUsers(loadPersistedJson(LS_USERS, LS_USERS_BACKUP, fallback));
+  const normalized = normalizeUsers(loadPersistedJson(LS_USERS, LS_USERS_BACKUP, fallback, true));
+  try { localStorage.setItem(LS_USERS, JSON.stringify(sanitizeUsersForStorage(normalized))); } catch(e) {}
+  try { localStorage.removeItem(LS_USERS_BACKUP); } catch(e) {}
+  return normalized;
 }
 function saveUsers() {
+  USERS = normalizeUsers(sanitizeUsersForStorage(USERS));
   return savePersistedJson(LS_USERS, LS_USERS_BACKUP, USERS, 'usuarios');
 }
 function findUser(username) { return USERS.find(u => u.username.toLowerCase() === String(username).toLowerCase()); }
@@ -459,7 +490,7 @@ async function doLogin() {
     }
   }
   user = user ? findUser(user.username || u) || user : findUser(u);
-  if (user && (user._supabaseAuthenticated || user.password === p) && user.active !== false) {
+  if (user && userPasswordMatches(user, p) && user.active !== false) {
     err.style.display = 'none';
     currentUser = user.username;
     document.getElementById('topbar-user').textContent = user.username;
@@ -1718,7 +1749,7 @@ function editUser(username) {
   document.getElementById('user-form-admin-password').value = '';
   renderUserProjectOptions(true);
 }
-function adminPasswordMatches(password){return USERS.some(user=>user.role==='admin'&&user.active!==false&&user.password===password);}
+function adminPasswordMatches(password){return USERS.some(user=>user.role==='admin'&&user.active!==false&&userPasswordMatches(user, password));}
 function saveUser(event) {
   event.preventDefault();
   const original = document.getElementById('user-edit-original').value;
@@ -1749,10 +1780,10 @@ function saveUser(event) {
     existing.allProjects = existing.role === 'admin' ? true : allProjects;
     existing.projectIds = existing.role === 'admin' || allProjects ? [] : projectIds;
     existing.modules = existing.role === 'admin' ? ['obras','relatorio','insumos','usuarios'] : modules;
-    if (newPassword) existing.password = newPassword;
+    if (newPassword) existing.passwordHash = hashLocalPassword(newPassword);
     existing.updatedAt = new Date().toISOString();
   } else {
-    USERS.push({username, password:newPassword, phone, role, active, allProjects, projectIds:allProjects ? [] : projectIds, modules, updatedAt:new Date().toISOString()});
+    USERS.push({username, passwordHash:hashLocalPassword(newPassword), phone, role, active, allProjects, projectIds:allProjects ? [] : projectIds, modules, updatedAt:new Date().toISOString()});
   }
   if (!saveUsers()) return;
   renderUsers(); resetUserForm(); msg.textContent = 'Usuário salvo com sucesso.';
@@ -2806,6 +2837,7 @@ function renderInsumos() {
       : '';
     const itemsMini = insumoItemsMiniHtml(order);
     const actions = [
+      order.status === 'pendente' ? '<button class="btn-action primary insumo-mobile-buy" title="Comprar pedido" onclick="openInsumoPurchaseModal(\'' + order.id + '\')">Comprar</button>' : '',
       '<button class="btn-action insumo-eye-btn" title="Ver pedido completo" onclick="openInsumoDetailModal(\'' + order.id + '\')">👁</button>'
     ].filter(Boolean).join('');
     return '<tr>' +
@@ -3202,6 +3234,7 @@ function openInsumoDetailModal(id) {
     isAdmin() ? '<button class="btn-action" onclick="deleteInsumoFromDetail(\'' + escJs(order.id) + '\')">Apagar</button>' : ''
   ].filter(Boolean).join('');
   content.innerHTML =
+    '<div class="insumo-flow-actions insumo-detail-actions-top">' + detailActions + '</div>' +
     '<div class="insumo-detail-grid">' +
       detailBox('Pedido', order.numeroPedido || order.id) +
       detailBox('Status', statusInsumoLabel(order.status)) +

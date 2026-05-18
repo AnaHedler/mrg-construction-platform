@@ -2967,3 +2967,103 @@ body.chat-enabled .topbar{background:#000!important;}
   }
 }
 
+/* Correcoes finais mobile: comprar visivel e textos sem sobrepor */
+.insumo-mobile-buy{
+  display:none!important;
+}
+.insumo-detail-actions-top{
+  margin:0 0 14px!important;
+  padding:0 0 14px!important;
+  border-bottom:1px solid #25293d!important;
+  position:static!important;
+  background:transparent!important;
+}
+@media(max-width:760px){
+  #view-insumos .insumos-table tr{
+    grid-template-columns:50px minmax(0,1fr) 72px 92px!important;
+    gap:7px!important;
+  }
+  #view-insumos .insumos-table td{
+    min-width:0!important;
+    overflow:hidden!important;
+  }
+  #view-insumos .insumo-material{
+    display:block!important;
+    max-width:100%!important;
+    white-space:nowrap!important;
+    overflow:hidden!important;
+    text-overflow:ellipsis!important;
+    line-height:1.25!important;
+  }
+  #view-insumos .insumo-status{
+    width:100%!important;
+    max-width:100%!important;
+    white-space:nowrap!important;
+    overflow:hidden!important;
+    text-overflow:ellipsis!important;
+  }
+  #view-insumos .insumo-actions{
+    display:flex!important;
+    justify-content:flex-end!important;
+    align-items:center!important;
+    gap:5px!important;
+    flex-wrap:nowrap!important;
+    min-width:0!important;
+  }
+  #view-insumos .insumo-eye-btn{
+    order:1;
+    width:38px!important;
+    min-width:38px!important;
+    height:38px!important;
+    flex:0 0 38px!important;
+  }
+  #view-insumos .insumo-mobile-buy{
+    order:2;
+    display:inline-flex!important;
+    width:46px!important;
+    min-width:46px!important;
+    height:38px!important;
+    flex:0 0 46px!important;
+    padding:0!important;
+    font-size:0!important;
+    border-radius:10px!important;
+  }
+  #view-insumos .insumo-mobile-buy::before{
+    content:'$';
+    font-size:16px!important;
+    font-weight:900;
+  }
+  #insumo-detail-content{
+    max-height:calc(100dvh - 118px)!important;
+    overflow-y:auto!important;
+  }
+  #insumo-detail-content .insumo-flow-actions{
+    display:grid!important;
+    grid-template-columns:1fr 1fr!important;
+    gap:8px!important;
+  }
+  #insumo-detail-content .insumo-flow-actions .btn-action{
+    width:100%!important;
+    min-height:42px!important;
+  }
+  #insumo-detail-content .insumo-flow-actions .btn-action.primary{
+    grid-column:1 / -1!important;
+  }
+}
+@media(max-width:390px){
+  #view-insumos .insumos-table tr{
+    grid-template-columns:46px minmax(0,1fr) 66px 86px!important;
+    gap:6px!important;
+  }
+  #view-insumos .insumo-eye-btn{
+    width:36px!important;
+    min-width:36px!important;
+    flex-basis:36px!important;
+  }
+  #view-insumos .insumo-mobile-buy{
+    width:44px!important;
+    min-width:44px!important;
+    flex-basis:44px!important;
+  }
+}
+

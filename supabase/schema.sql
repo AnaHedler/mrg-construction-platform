@@ -1,6 +1,6 @@
 -- Engerama Hub - Supabase schema compartilhado com RLS
 -- Rode este arquivo no SQL Editor do Supabase.
--- Nao use service_role no app frontend. Use apenas anon/publishable key.
+-- Nao use chave privilegiada no app frontend. Use apenas anon/publishable key.
 
 create extension if not exists "pgcrypto";
 
