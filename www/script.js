@@ -2079,7 +2079,37 @@ async function saveUser(event) {
     existing.updatedAt = new Date().toISOString();
   } else if (cloudPrimaryMode()) {
     try {
-      if (newPassword) {
+      if (window.EngeramaAPI?.upsertUsuarioPorEmail) {
+        const state = await window.EngeramaAPI.upsertUsuarioPorEmail({
+          email: username,
+          username,
+          phone,
+          role,
+          active,
+          allProjects,
+          projectIds: allProjects ? [] : projectIds,
+          modules
+        });
+        applyCloudSnapshot(state, true);
+        renderUsers();
+        resetUserForm();
+        msg.textContent = 'Usuário vinculado ao Supabase Auth com sucesso.';
+        return;
+      }
+      if (!newPassword) {
+        throw new Error('Informe uma senha temporária para criar o acesso no Supabase Auth.');
+      }
+    } catch(linkError) {
+      const linkReason = String(linkError.message || '');
+      if (!/AUTH_USER_NOT_FOUND|not found|não encontrado|nao encontrado|Could not find the function/i.test(linkReason)) {
+        msg.textContent = 'Não foi possível vincular o usuário no Supabase: ' + linkReason;
+        return;
+      }
+      if (!newPassword) {
+        msg.textContent = 'Esse e-mail ainda não existe no Supabase Auth. Informe uma senha temporária para criar o acesso.';
+        return;
+      }
+      try {
         const signup = await window.EngeramaAuth.signUp(username, newPassword, { username, phone, telefone: phone });
         if (!signup.user?.id) throw new Error('Supabase não retornou o usuário criado.');
         USERS.push({
@@ -2096,57 +2126,31 @@ async function saveUser(event) {
           _supabaseAuthenticated: false
         });
         if (signup.emailConfirmationRequired) showToast('Usuário criado no Auth. Ele precisa confirmar o e-mail antes do primeiro login.', 'warn');
-      } else if (window.EngeramaAPI?.upsertUsuarioPorEmail) {
-        const state = await window.EngeramaAPI.upsertUsuarioPorEmail({
-          email: username,
-          username,
-          phone,
-          role,
-          active,
-          allProjects,
-          projectIds: allProjects ? [] : projectIds,
-          modules
-        });
-        applyCloudSnapshot(state, true);
-        renderUsers();
-        resetUserForm();
-        msg.textContent = 'Usuário vinculado ao Supabase Auth com sucesso.';
-        return;
-      } else {
-        throw new Error('Informe uma senha temporária para criar o acesso no Supabase Auth.');
-      }
-    } catch(e) {
-      const reason = String(e.message || '');
-      if (/already|registered|exists|User already/i.test(reason) && window.EngeramaAPI?.upsertUsuarioPorEmail) {
-        try {
-          const state = await window.EngeramaAPI.upsertUsuarioPorEmail({
-            email: username,
-            username,
-            phone,
-            role,
-            active,
-            allProjects,
-            projectIds: allProjects ? [] : projectIds,
-            modules
-          });
-          applyCloudSnapshot(state, true);
-          renderUsers();
-          resetUserForm();
-          msg.textContent = 'Usuário já existia no Auth e foi vinculado às permissões.';
-          return;
-        } catch(rpcError) {
-          msg.textContent = 'Usuário existe no Auth, mas não foi possível vincular. Rode a função admin_upsert_usuario_por_email no Supabase. Detalhe: ' + rpcError.message;
+      } catch(signupError) {
+        const signupReason = String(signupError.message || '');
+        if (/already|registered|exists|User already/i.test(signupReason)) {
+          msg.textContent = 'Esse e-mail já existe no Auth. Rode o SQL atualizado para liberar a função admin_upsert_usuario_por_email e salve novamente.';
           return;
         }
+        msg.textContent = 'Não foi possível criar no Supabase Auth: ' + signupReason;
+        return;
       }
-      msg.textContent = 'Não foi possível criar/vincular no Supabase Auth: ' + reason;
-      return;
     }
   } else {
     USERS.push({username, passwordHash:hashLocalPassword(newPassword), phone, role, active, allProjects, projectIds:allProjects ? [] : projectIds, modules, updatedAt:new Date().toISOString()});
   }
   if (!saveUsers()) return;
-  if (cloudPrimaryMode()) await pushCloudSync();
+  if (cloudPrimaryMode() && window.EngeramaAPI?.syncState) {
+    try {
+      const state = await window.EngeramaAPI.syncState(currentCloudSnapshot());
+      applyCloudSnapshot(state, true);
+    } catch(syncError) {
+      msg.textContent = 'Usuário criado na autenticação, mas não sincronizou permissões: ' + syncError.message;
+      return;
+    }
+  } else if (cloudPrimaryMode()) {
+    await pushCloudSync();
+  }
   renderUsers(); resetUserForm(); msg.textContent = 'Usuário salvo com sucesso.';
 }
 async function deleteUser(username) {

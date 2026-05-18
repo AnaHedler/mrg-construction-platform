@@ -151,6 +151,128 @@ insert into public.empresas (id, nome, slug)
 values ('00000000-0000-4000-8000-000000000001', 'Engerama', 'engerama')
 on conflict (id) do update set nome = excluded.nome, slug = excluded.slug;
 
+create or replace function public.handle_auth_user_to_usuario()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, auth
+as $$
+declare
+  v_empresa_id uuid := '00000000-0000-4000-8000-000000000001'::uuid;
+  v_email text := coalesce(nullif(trim(new.email), ''), new.id::text || '@sem-email.local');
+  v_username text;
+  v_nome text;
+  v_telefone text;
+  v_primeiro_usuario boolean;
+begin
+  select not exists (select 1 from public.usuarios) into v_primeiro_usuario;
+
+  v_username := coalesce(
+    nullif(trim(new.raw_user_meta_data ->> 'username'), ''),
+    nullif(trim(new.raw_user_meta_data ->> 'usuario'), ''),
+    v_email,
+    v_email
+  );
+
+  v_nome := coalesce(
+    nullif(trim(new.raw_user_meta_data ->> 'nome'), ''),
+    nullif(trim(new.raw_user_meta_data ->> 'name'), ''),
+    v_username
+  );
+
+  v_telefone := coalesce(
+    nullif(trim(new.raw_user_meta_data ->> 'telefone'), ''),
+    nullif(trim(new.raw_user_meta_data ->> 'phone'), '')
+  );
+
+  insert into public.usuarios (
+    id, empresa_id, username, nome, email, telefone, perfil, ativo,
+    todas_obras, obras_permitidas, modulos
+  )
+  values (
+    new.id,
+    v_empresa_id,
+    v_username,
+    v_nome,
+    v_email,
+    v_telefone,
+    case when v_primeiro_usuario then 'admin'::public.usuario_perfil else 'visualizador'::public.usuario_perfil end,
+    true,
+    v_primeiro_usuario,
+    '{}'::uuid[],
+    case
+      when v_primeiro_usuario then array['obras','relatorio','insumos','usuarios']::text[]
+      else '{}'::text[]
+    end
+  )
+  on conflict (id) do update set
+    email = excluded.email,
+    telefone = coalesce(public.usuarios.telefone, excluded.telefone),
+    username = coalesce(nullif(public.usuarios.username, ''), excluded.username),
+    nome = coalesce(nullif(public.usuarios.nome, ''), excluded.nome),
+    updated_at = now();
+
+  return new;
+end;
+$$;
+
+drop trigger if exists on_auth_user_created_create_usuario on auth.users;
+create trigger on_auth_user_created_create_usuario
+after insert on auth.users
+for each row execute function public.handle_auth_user_to_usuario();
+
+with auth_rows as (
+  select
+    au.*,
+    row_number() over (order by au.created_at nulls last, au.id) as ordem_criacao
+  from auth.users au
+  where not exists (
+    select 1
+    from public.usuarios pu
+    where pu.id = au.id
+  )
+),
+estado_atual as (
+  select not exists (select 1 from public.usuarios) as sem_usuarios
+)
+insert into public.usuarios (
+  id, empresa_id, username, nome, email, telefone, perfil, ativo,
+  todas_obras, obras_permitidas, modulos
+)
+select
+  au.id,
+  '00000000-0000-4000-8000-000000000001'::uuid,
+  coalesce(
+    nullif(trim(au.raw_user_meta_data ->> 'username'), ''),
+    nullif(trim(au.raw_user_meta_data ->> 'usuario'), ''),
+    coalesce(nullif(trim(au.email), ''), au.id::text || '@sem-email.local'),
+    au.id::text
+  ),
+  coalesce(
+    nullif(trim(au.raw_user_meta_data ->> 'nome'), ''),
+    nullif(trim(au.raw_user_meta_data ->> 'name'), ''),
+    split_part(coalesce(au.email, au.id::text), '@', 1),
+    au.id::text
+  ),
+  coalesce(nullif(trim(au.email), ''), au.id::text || '@sem-email.local'),
+  coalesce(
+    nullif(trim(au.raw_user_meta_data ->> 'telefone'), ''),
+    nullif(trim(au.raw_user_meta_data ->> 'phone'), '')
+  ),
+  case
+    when estado_atual.sem_usuarios and au.ordem_criacao = 1 then 'admin'::public.usuario_perfil
+    else 'visualizador'::public.usuario_perfil
+  end,
+  true,
+  estado_atual.sem_usuarios and au.ordem_criacao = 1,
+  '{}'::uuid[],
+  case
+    when estado_atual.sem_usuarios and au.ordem_criacao = 1 then array['obras','relatorio','insumos','usuarios']::text[]
+    else '{}'::text[]
+  end
+from auth_rows au
+cross join estado_atual;
+
 create or replace function public.touch_updated_at()
 returns trigger
 language plpgsql
@@ -220,6 +342,64 @@ as $$
       )
   );
 $$;
+
+create or replace function public.setup_first_admin(
+  p_username text,
+  p_nome text,
+  p_email text,
+  p_telefone text default null
+)
+returns public.usuarios
+language plpgsql
+security definer
+set search_path = public, auth
+as $$
+declare
+  v_usuario public.usuarios;
+begin
+  if auth.uid() is null then
+    raise exception 'Login Supabase necessario para criar o primeiro administrador.';
+  end if;
+
+  if exists (
+    select 1
+    from public.usuarios
+    where perfil = 'admin'::public.usuario_perfil
+      and ativo = true
+  ) then
+    raise exception 'Administrador inicial ja existe.';
+  end if;
+
+  insert into public.usuarios (
+    id, empresa_id, username, nome, email, telefone, perfil, ativo,
+    todas_obras, obras_permitidas, modulos
+  )
+  values (
+    auth.uid(),
+    '00000000-0000-4000-8000-000000000001'::uuid,
+    coalesce(nullif(trim(p_username), ''), nullif(trim(p_email), ''), auth.uid()::text),
+    coalesce(nullif(trim(p_nome), ''), nullif(trim(p_username), ''), nullif(trim(p_email), ''), 'Administrador'),
+    coalesce(nullif(trim(p_email), ''), auth.uid()::text || '@sem-email.local'),
+    nullif(trim(p_telefone), ''),
+    'admin',
+    true,
+    true,
+    '{}'::uuid[],
+    array['obras','relatorio','insumos','usuarios']::text[]
+  )
+  on conflict (id) do update set
+    perfil = 'admin',
+    ativo = true,
+    todas_obras = true,
+    modulos = array['obras','relatorio','insumos','usuarios']::text[],
+    updated_at = now()
+  returning * into v_usuario;
+
+  return v_usuario;
+end;
+$$;
+
+grant execute on function public.setup_first_admin(text, text, text, text) to authenticated;
 
 create or replace function public.admin_upsert_usuario_por_email(
   p_email text,
