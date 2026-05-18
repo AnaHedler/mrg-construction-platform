@@ -1817,13 +1817,8 @@ body.chat-enabled .topbar{background:#000!important;}
   display:none!important;
 }
 .login-card::after{
-  content:'Dados sincronizados online e disponíveis em modo offline local.';
-  display:block;
-  margin-top:16px;
-  color:rgba(255,255,255,.58);
-  font-size:11px;
-  line-height:1.45;
-  text-align:center;
+  content:none!important;
+  display:none!important;
 }
 .lf-label{
   color:rgba(255,255,255,.66)!important;
@@ -1869,6 +1864,26 @@ body.chat-enabled .topbar{background:#000!important;}
   max-width:min(390px,calc(100vw - 34px));
   padding:0 10px;
   color:rgba(255,255,255,.70)!important;
+}
+.login-actions-row{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  margin-top:13px;
+  flex-wrap:wrap;
+}
+.login-actions-row button{
+  background:transparent;
+  border:0;
+  color:rgba(255,255,255,.72);
+  font-size:12px;
+  font-weight:700;
+  cursor:pointer;
+  padding:6px 0;
+}
+.login-actions-row button:hover{
+  color:#f0c000;
 }
 .app-splash{
   background:
@@ -3067,3 +3082,168 @@ body.chat-enabled .topbar{background:#000!important;}
   }
 }
 
+/* Ajustes finais mobile: medições sem sobreposição e compra sem corte */
+@media(max-width:620px){
+  #view-detail .table-card{
+    border:0!important;
+    background:transparent!important;
+    overflow:visible!important;
+  }
+  #view-detail .table-card-header{
+    background:#141622!important;
+    border:1px solid #25293d!important;
+    border-radius:12px!important;
+    padding:13px 14px!important;
+    margin-bottom:10px!important;
+  }
+  #view-detail .table-card > div[style*="overflow-x"]{
+    overflow:visible!important;
+  }
+  #view-detail table.med-table,
+  #view-detail table.med-table tbody,
+  #view-detail table.med-table tr,
+  #view-detail table.med-table td{
+    display:block!important;
+    width:100%!important;
+    min-width:0!important;
+  }
+  #view-detail table.med-table thead{
+    display:none!important;
+  }
+  #view-detail table.med-table tr{
+    position:relative!important;
+    display:grid!important;
+    grid-template-columns:minmax(0,1fr) minmax(0,1fr)!important;
+    gap:8px 10px!important;
+    padding:14px 58px 14px 14px!important;
+    margin-bottom:10px!important;
+    border:1px solid #25293d!important;
+    border-radius:14px!important;
+    background:#151824!important;
+    align-items:stretch!important;
+  }
+  #view-detail table.med-table td{
+    border:0!important;
+    padding:0!important;
+    text-align:left!important;
+    font-size:12px!important;
+    line-height:1.25!important;
+    overflow:visible!important;
+    white-space:normal!important;
+    word-break:normal!important;
+    overflow-wrap:anywhere!important;
+  }
+  #view-detail table.med-table td:nth-child(1){
+    grid-column:1 / -1!important;
+    padding-right:4px!important;
+  }
+  #view-detail table.med-table td:nth-child(2),
+  #view-detail table.med-table td:nth-child(3),
+  #view-detail table.med-table td:nth-child(5){
+    background:#10131f!important;
+    border:1px solid rgba(255,255,255,.06)!important;
+    border-radius:10px!important;
+    padding:8px 9px!important;
+    min-height:52px!important;
+  }
+  #view-detail table.med-table td:nth-child(2)::before{content:'Receita';}
+  #view-detail table.med-table td:nth-child(3)::before{content:'Gasto';}
+  #view-detail table.med-table td:nth-child(5)::before{content:'Status';}
+  #view-detail table.med-table td:nth-child(2)::before,
+  #view-detail table.med-table td:nth-child(3)::before,
+  #view-detail table.med-table td:nth-child(5)::before{
+    display:block;
+    margin-bottom:4px;
+    color:#7f8798;
+    font-size:9px;
+    text-transform:uppercase;
+    letter-spacing:.6px;
+    font-weight:800;
+  }
+  #view-detail table.med-table td:nth-child(4),
+  #view-detail table.med-table td:nth-child(6){
+    display:none!important;
+  }
+  #view-detail table.med-table td:nth-child(7){
+    position:absolute!important;
+    right:12px!important;
+    top:12px!important;
+    width:36px!important;
+    display:flex!important;
+    flex-direction:column!important;
+    gap:6px!important;
+    align-items:center!important;
+    justify-content:flex-start!important;
+    white-space:normal!important;
+  }
+  #view-detail .med-num{
+    font-size:16px!important;
+    line-height:1.15!important;
+    color:#f0c000!important;
+  }
+  #view-detail .med-date{
+    font-size:12px!important;
+    margin-top:3px!important;
+  }
+  #view-detail .status-pill{
+    max-width:100%!important;
+    width:auto!important;
+    justify-content:center!important;
+    font-size:11px!important;
+    padding:4px 8px!important;
+  }
+  #view-detail .edit-btn,
+  #view-detail .del-btn{
+    width:32px!important;
+    height:32px!important;
+    border:1px solid #2a2d40!important;
+    background:#111421!important;
+  }
+  #view-insumos .insumos-table tr{
+    grid-template-columns:52px minmax(0,1fr) 76px 128px!important;
+    gap:7px!important;
+  }
+  #view-insumos .insumo-actions{
+    justify-content:flex-end!important;
+    flex-wrap:nowrap!important;
+    gap:6px!important;
+    overflow:visible!important;
+  }
+  #view-insumos .insumo-eye-btn{
+    width:38px!important;
+    min-width:38px!important;
+    flex:0 0 38px!important;
+  }
+  #view-insumos .insumo-mobile-buy{
+    display:inline-flex!important;
+    width:82px!important;
+    min-width:82px!important;
+    flex:0 0 82px!important;
+    height:38px!important;
+    padding:0 10px!important;
+    font-size:12px!important;
+    font-weight:800!important;
+    white-space:nowrap!important;
+  }
+  #view-insumos .insumo-mobile-buy::before{
+    content:none!important;
+  }
+}
+@media(max-width:390px){
+  #view-insumos .insumos-table tr{
+    grid-template-columns:48px minmax(0,1fr) 68px 116px!important;
+    gap:6px!important;
+  }
+  #view-insumos .insumo-mobile-buy{
+    width:74px!important;
+    min-width:74px!important;
+    flex-basis:74px!important;
+    font-size:11px!important;
+    padding:0 7px!important;
+  }
+  #view-insumos .insumo-eye-btn{
+    width:36px!important;
+    min-width:36px!important;
+    flex-basis:36px!important;
+  }
+}

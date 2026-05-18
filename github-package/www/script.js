@@ -214,6 +214,8 @@ let activeView = 'obras';
 let viewHistory = [];
 let suppressViewHistory = false;
 let cloudRealtimeUnsubscribe = null;
+let authStateUnsubscribe = null;
+let manualLogoutInProgress = false;
 
 function backendBaseUrl() {
   return String(APP_CONFIG.apiBaseUrl || '').trim().replace(/\/+$/, '');
@@ -374,6 +376,7 @@ async function pushCloudSync() {
     applyCloudSnapshot(data.state || data.snapshot, true);
     clearCloudSyncPending();
   } catch(e) {
+    handleSupabaseAuthError(e);
     console.warn('Sincronizacao online indisponivel:', e.message);
   } finally {
     syncInFlight = false;
@@ -391,6 +394,7 @@ async function pullCloudSync(renderNow = true) {
     const data = await backendRequest('/api/state');
     applyCloudSnapshot(data.state || data.snapshot, renderNow);
   } catch(e) {
+    handleSupabaseAuthError(e);
     console.warn('Nao foi possivel baixar dados online:', e.message);
   }
 }
@@ -407,8 +411,50 @@ async function restoreSupabaseSession() {
     return setAuthenticatedUser(user);
   } catch(e) {
     console.warn('Sessao Supabase nao restaurada:', e.message);
+    if (!isNetworkOnline()) showToast('Supabase offline. Entre novamente quando a conexão voltar.', 'warn');
     return false;
   }
+}
+function redirectToLogin(reason) {
+  stopCloudRealtime();
+  currentUser = '';
+  document.getElementById('page-app')?.classList.remove('active');
+  document.getElementById('page-login')?.classList.add('active');
+  document.body.classList.remove('chat-enabled');
+  viewHistory = [];
+  activeView = 'obras';
+  closeMobileMenu();
+  toggleQuickChat(false);
+  if (reason && typeof showToast === 'function') showToast(reason, 'warn');
+}
+function startAuthSessionWatcher() {
+  if (!cloudPrimaryMode() || !window.EngeramaAuth?.onAuthStateChange || authStateUnsubscribe) return;
+  authStateUnsubscribe = window.EngeramaAuth.onAuthStateChange(async (event, session) => {
+    if (event === 'SIGNED_OUT') {
+      if (!manualLogoutInProgress) redirectToLogin('Sessão encerrada. Entre novamente.');
+      return;
+    }
+    if (event === 'TOKEN_REFRESHED' && !session) {
+      redirectToLogin('Sessão expirada. Entre novamente.');
+      return;
+    }
+    if (event === 'USER_UPDATED' && document.getElementById('page-app')?.classList.contains('active')) {
+      await restoreSupabaseSession();
+      return;
+    }
+    if (event === 'SIGNED_IN' && session?.user && !currentUser) {
+      await restoreSupabaseSession();
+    }
+  });
+}
+function handleSupabaseAuthError(error) {
+  const message = String(error?.message || error || '').toLowerCase();
+  if (!cloudPrimaryMode()) return false;
+  if (message.includes('jwt') || message.includes('session') || message.includes('auth')) {
+    redirectToLogin('Sessão expirada. Entre novamente.');
+    return true;
+  }
+  return false;
 }
 function startCloudRealtime() {
   if (!window.EngeramaAPI?.subscribeState || cloudRealtimeUnsubscribe) return;
@@ -429,6 +475,8 @@ async function loginWithBackend(username, password) {
   if (window.EngeramaSupabase?.enabled && window.EngeramaAuth?.signIn) {
     const user = await window.EngeramaAuth.signIn(username, password);
     USERS = normalizeUsers(mergeUsersByUsername(USERS, [{
+      id: user.id,
+      email: user.email,
       username: user.username,
       phone: user.phone,
       role: user.role,
@@ -475,7 +523,14 @@ function normalizeUsers(users) {
   return users.map(user => {
     const normalizedRole = user.role === 'viewer' ? 'visualizador' : (user.role || 'visualizador');
     const admin = normalizedRole === 'admin';
-    const savedModules = Array.isArray(user.modules) ? user.modules : ['obras','relatorio','insumos'];
+    const roleDefaults = normalizedRole === 'compras'
+      ? ['insumos']
+      : normalizedRole === 'financeiro'
+        ? ['relatorio']
+        : normalizedRole === 'obra'
+          ? ['obras','insumos']
+          : [];
+    const savedModules = Array.isArray(user.modules) ? user.modules : roleDefaults;
     const modules = admin ? ['obras','relatorio','insumos','usuarios'] : savedModules.filter(module => ['obras','relatorio','insumos'].includes(module));
     const savedProjectIds = Array.isArray(user.projectIds) ? user.projectIds.filter(id => allIds.includes(id)) : [];
     const allProjects = admin ? true : user.allProjects === true || (user.allProjects !== false && !savedProjectIds.length);
@@ -593,16 +648,69 @@ async function doLogin() {
     err.style.display = 'block';
   }
 }
-function doLogout() {
+async function doPasswordRecovery() {
+  const u = document.getElementById('inp-user').value.trim();
+  const err = document.getElementById('login-err');
+  if (!u) {
+    showToast('Informe seu e-mail no campo de usuário para recuperar a senha.', 'warn');
+    return;
+  }
+  if (!cloudPrimaryMode() || !window.EngeramaAuth?.resetPassword) {
+    showToast('Recuperação de senha exige Supabase configurado.', 'error');
+    return;
+  }
+  if (!isNetworkOnline()) {
+    showToast('Sem internet. Não foi possível enviar recuperação agora.', 'error');
+    return;
+  }
+  try {
+    await window.EngeramaAuth.resetPassword(u);
+    if (err) err.style.display = 'none';
+    showToast('Enviamos o link de recuperação para o e-mail informado.', 'success');
+  } catch(e) {
+    showToast('Não foi possível enviar recuperação: ' + e.message, 'error');
+  }
+}
+async function doFirstAdminSignUp() {
+  const u = document.getElementById('inp-user').value.trim();
+  const p = document.getElementById('inp-pass').value;
+  const err = document.getElementById('login-err');
+  if (!u || !p) {
+    showToast('Informe e-mail e senha para criar o primeiro acesso.', 'warn');
+    return;
+  }
+  if (!cloudPrimaryMode() || !window.EngeramaAuth?.signUp) {
+    showToast('Cadastro exige Supabase configurado.', 'error');
+    return;
+  }
+  if (!isNetworkOnline()) {
+    showToast('Sem internet. Não foi possível criar acesso agora.', 'error');
+    return;
+  }
+  try {
+    const result = await window.EngeramaAuth.signUp(u, p, { username: u });
+    if (result.profile) {
+      if (err) err.style.display = 'none';
+      setAuthenticatedUser(result.profile);
+      showToast('Primeiro administrador criado com sucesso.', 'success');
+      return;
+    }
+    showToast('Cadastro criado. Verifique o e-mail de confirmação antes de entrar.', 'success');
+  } catch(e) {
+    showToast('Não foi possível criar acesso: ' + e.message, 'error');
+  }
+}
+async function doLogout() {
   stopCloudRealtime();
-  window.EngeramaAuth?.signOut?.().catch(() => null);
-  document.getElementById('page-app').classList.remove('active');
-  document.getElementById('page-login').classList.add('active');
-  document.body.classList.remove('chat-enabled');
-  viewHistory = [];
-  activeView = 'obras';
-  closeMobileMenu();
-  toggleQuickChat(false);
+  manualLogoutInProgress = true;
+  try {
+    await window.EngeramaAuth?.signOut?.();
+  } catch(e) {
+    console.warn('Logout Supabase falhou:', e.message);
+  } finally {
+    manualLogoutInProgress = false;
+  }
+  redirectToLogin('Sessão encerrada com segurança.');
   document.getElementById('inp-user').value = '';
   document.getElementById('inp-pass').value = '';
 }
@@ -1877,7 +1985,7 @@ function editUser(username) {
   renderUserProjectOptions(true);
 }
 function adminPasswordMatches(password){return USERS.some(user=>user.role==='admin'&&user.active!==false&&userPasswordMatches(user, password));}
-function saveUser(event) {
+async function saveUser(event) {
   event.preventDefault();
   if (!isAdmin()) {
     showToast('Apenas administradores podem gerenciar usuários.', 'error');
@@ -1896,7 +2004,7 @@ function saveUser(event) {
   const modules = role === 'admin' ? ['obras','relatorio','insumos','usuarios'] : Array.from(document.querySelectorAll('#user-module-access input:checked')).map(input => input.value);
   const needsProjectSelection = role !== 'admin' && modules.includes('obras');
   const allProjects = role === 'admin' || !needsProjectSelection || document.getElementById('user-project-all')?.checked !== false;
-  if (cloudPrimaryMode() && !existing) { msg.textContent = 'Crie primeiro o acesso em Supabase Auth. Depois ajuste as permissoes aqui.'; return; }
+  if (cloudPrimaryMode() && !existing && !newPassword) { msg.textContent = 'Informe uma senha temporária para criar o acesso no Supabase Auth.'; return; }
   if (!username) { msg.textContent = 'Informe o usuário.'; return; }
   if (findUser(username) && findUser(username) !== existing) { msg.textContent = 'Já existe um usuário com esse login.'; return; }
   if (role !== 'admin' && !normalizePhoneForWhatsApp(phone)) { msg.textContent = 'Informe o celular/WhatsApp do usuário.'; return; }
@@ -1914,10 +2022,33 @@ function saveUser(event) {
     existing.modules = existing.role === 'admin' ? ['obras','relatorio','insumos','usuarios'] : modules;
     if (!cloudPrimaryMode() && newPassword) existing.passwordHash = hashLocalPassword(newPassword);
     existing.updatedAt = new Date().toISOString();
+  } else if (cloudPrimaryMode()) {
+    try {
+      const signup = await window.EngeramaAuth.signUp(username, newPassword, { username, phone, telefone: phone });
+      if (!signup.user?.id) throw new Error('Supabase não retornou o usuário criado.');
+      USERS.push({
+        id: signup.user.id,
+        email: signup.user.email || window.EngeramaAuth.emailFromLogin(username),
+        username,
+        phone,
+        role,
+        active,
+        allProjects,
+        projectIds: allProjects ? [] : projectIds,
+        modules,
+        updatedAt: new Date().toISOString(),
+        _supabaseAuthenticated: false
+      });
+      if (signup.emailConfirmationRequired) showToast('Usuário criado no Auth. Ele precisa confirmar o e-mail antes do primeiro login.', 'warn');
+    } catch(e) {
+      msg.textContent = 'Não foi possível criar no Supabase Auth: ' + e.message;
+      return;
+    }
   } else {
     USERS.push({username, passwordHash:hashLocalPassword(newPassword), phone, role, active, allProjects, projectIds:allProjects ? [] : projectIds, modules, updatedAt:new Date().toISOString()});
   }
   if (!saveUsers()) return;
+  if (cloudPrimaryMode()) await pushCloudSync();
   renderUsers(); resetUserForm(); msg.textContent = 'Usuário salvo com sucesso.';
 }
 async function deleteUser(username) {
@@ -4086,6 +4217,7 @@ async function initPushNotifications() {
 async function initAppRuntime() {
   setTimeout(hideSplash, 650);
   updateBackButton();
+  startAuthSessionWatcher();
   const restored = await restoreSupabaseSession();
   if (backendEnabled()) {
     if (restored) syncWhenPossible('inicio');

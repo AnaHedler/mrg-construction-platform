@@ -235,10 +235,10 @@
     <div class="login-logo-sub">ENGERAMA HUB</div>
   </div>
   <div class="login-card">
-    <div class="lf-label">Usuário</div>
+    <div class="lf-label">E-mail</div>
     <div class="lf-input-wrap">
       <span class="icon">👤</span>
-      <input type="text" id="inp-user" placeholder="Digite o usuário" autocomplete="username">
+      <input type="email" id="inp-user" placeholder="Digite seu e-mail" autocomplete="username">
     </div>
     <div class="lf-label">Senha</div>
     <div class="lf-input-wrap">
@@ -247,6 +247,10 @@
     </div>
     <div id="login-err" class="login-err">Usuário ou senha incorretos.</div>
     <button class="btn-login" onclick="doLogin()">Entrar</button>
+    <div class="login-actions-row">
+      <button type="button" onclick="doPasswordRecovery()">Esqueci minha senha</button>
+      <button type="button" onclick="doFirstAdminSignUp()">Criar primeiro acesso</button>
+    </div>
   </div>
   <div class="login-info">Para cadastrar novos usuários, entre como <b>admin</b> e acesse <b>Usuários</b>.</div>
 </div>

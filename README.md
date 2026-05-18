@@ -58,7 +58,7 @@ SUPABASE_ANON_KEY=
 ENGERAMA_ORG_ID=
 ```
 
-Rode `supabase/schema.sql` no SQL Editor do Supabase. O sistema usa Supabase Auth para login, tabelas reais com RLS e políticas por empresa. Não use chave privilegiada no front-end.
+Rode `supabase/schema.sql` no SQL Editor do Supabase. O sistema usa Supabase Auth com e-mail/senha, sessão persistente, recuperação de senha, tabelas reais com RLS e políticas por empresa. Não use chave privilegiada no front-end.
 
 Com Supabase configurado, o app não grava obras, pedidos, compras, usuários ou dados financeiros completos em `localStorage`; esses dados vêm da base online após login.
 

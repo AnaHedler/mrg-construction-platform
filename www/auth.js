@@ -9,6 +9,10 @@
     const value = String(login || '').trim();
     return value.includes('@') ? value : value.toLowerCase() + '@engerama.local';
   }
+  function resetRedirectUrl() {
+    const href = window.location.href.split('#')[0].split('?')[0];
+    return href || window.location.origin || undefined;
+  }
   async function currentSession() {
     const sb = client();
     if (!sb) return null;
@@ -17,21 +21,34 @@
     return data.session || null;
   }
   async function currentUser() {
-    const session = await currentSession();
-    return session?.user || null;
+    const sb = client();
+    if (!sb) return null;
+    const { data, error } = await sb.auth.getUser();
+    if (error) throw error;
+    return data.user || null;
   }
   function mapUsuario(row) {
+    const role = row.perfil || 'visualizador';
+    const defaultModules = role === 'admin'
+      ? ['obras', 'relatorio', 'insumos', 'usuarios']
+      : role === 'compras'
+        ? ['insumos']
+        : role === 'financeiro'
+          ? ['relatorio']
+          : role === 'obra'
+            ? ['obras', 'insumos']
+            : [];
     return {
       id: row.id,
       empresaId: row.empresa_id,
       username: row.username || row.email,
       email: row.email,
-      role: row.perfil || 'visualizador',
+      role,
       phone: row.telefone || '',
       active: row.ativo !== false,
       allProjects: row.todas_obras === true,
       projectIds: Array.isArray(row.obras_permitidas) ? row.obras_permitidas : [],
-      modules: Array.isArray(row.modulos) ? row.modulos : ['insumos'],
+      modules: Array.isArray(row.modulos) ? row.modulos : defaultModules,
       _supabaseAuthenticated: true
     };
   }
@@ -64,35 +81,88 @@
     if (error) throw error;
     return data || null;
   }
+  async function profileFromAuthUser(authUser, login, createFirstAdmin = true) {
+    let usuario = await fetchUsuario(authUser);
+    if (!usuario && createFirstAdmin) usuario = await setupFirstAdmin(authUser, login);
+    if (!usuario) throw new Error('Usuario autenticado sem permissao nesta empresa.');
+    if (usuario.ativo === false) throw new Error('Usuario inativo.');
+    window.EngeramaAuth._lastUserId = authUser.id;
+    return mapUsuario(usuario);
+  }
   async function signIn(login, password) {
     const sb = client();
     if (!sb) throw new Error('Supabase indisponivel');
     const email = emailFromLogin(login);
     const { data, error } = await sb.auth.signInWithPassword({ email, password });
     if (error) throw error;
-    let usuario = await fetchUsuario(data.user);
-    if (!usuario) {
-      usuario = await setupFirstAdmin(data.user, login);
+    return profileFromAuthUser(data.user, login, true);
+  }
+  async function signUp(login, password, metadata = {}) {
+    const sb = client();
+    if (!sb) throw new Error('Supabase indisponivel');
+    const previousSession = await currentSession().catch(() => null);
+    const previousUserId = previousSession?.user?.id || null;
+    const email = emailFromLogin(login);
+    const username = String(metadata.username || login || email).includes('@')
+      ? String(email).split('@')[0]
+      : String(metadata.username || login || '').trim();
+    const { data, error } = await sb.auth.signUp({
+      email,
+      password,
+      options: {
+        data: {
+          username,
+          nome: metadata.nome || metadata.name || username,
+          telefone: metadata.telefone || metadata.phone || ''
+        },
+        emailRedirectTo: resetRedirectUrl()
+      }
+    });
+    if (error) throw error;
+    const afterUser = await currentUser().catch(() => null);
+    if (previousSession?.access_token && afterUser?.id && afterUser.id !== previousUserId) {
+      await sb.auth.setSession({
+        access_token: previousSession.access_token,
+        refresh_token: previousSession.refresh_token
+      }).catch(() => null);
     }
-    if (!usuario) throw new Error('Usuario autenticado sem permissao nesta empresa.');
-    if (usuario.ativo === false) throw new Error('Usuario inativo.');
-    window.EngeramaAuth._lastUserId = data.user.id;
-    return mapUsuario(usuario);
+    let profile = null;
+    if (!previousUserId && data.user && data.session) {
+      profile = await profileFromAuthUser(data.user, login, true);
+    }
+    return {
+      user: data.user || null,
+      session: data.session || null,
+      profile,
+      emailConfirmationRequired: !!data.user && !data.session
+    };
   }
   async function restoreSession() {
-    const session = await currentSession();
-    const user = session?.user;
+    const user = await currentUser();
     if (!user) return null;
-    const usuario = await fetchUsuario(user);
-    if (!usuario) return null;
-    if (usuario.ativo === false) throw new Error('Usuario inativo.');
-    window.EngeramaAuth._lastUserId = user.id;
-    return mapUsuario(usuario);
+    return profileFromAuthUser(user, user.email, false);
+  }
+  async function resetPassword(login) {
+    const sb = client();
+    if (!sb) throw new Error('Supabase indisponivel');
+    const email = emailFromLogin(login);
+    const { error } = await sb.auth.resetPasswordForEmail(email, {
+      redirectTo: resetRedirectUrl()
+    });
+    if (error) throw error;
+    return true;
   }
   async function signOut() {
     const sb = client();
     if (!sb) return;
-    await sb.auth.signOut();
+    const { error } = await sb.auth.signOut();
+    if (error) throw error;
+  }
+  function onAuthStateChange(callback) {
+    const sb = client();
+    if (!sb || typeof callback !== 'function') return () => {};
+    const { data } = sb.auth.onAuthStateChange((event, session) => callback(event, session));
+    return () => data?.subscription?.unsubscribe?.();
   }
   async function ensureProfile() {
     return null;
@@ -101,9 +171,12 @@
     emailFromLogin,
     currentSession,
     currentUser,
+    signUp,
     signIn,
     restoreSession,
+    resetPassword,
     signOut,
+    onAuthStateChange,
     ensureProfile,
     _lastUserId: null
   };

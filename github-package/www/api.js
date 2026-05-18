@@ -32,6 +32,14 @@
     const value = String(role || 'visualizador').toLowerCase();
     return value === 'viewer' ? 'visualizador' : value;
   }
+  function defaultModulesForRole(role) {
+    const value = roleToDb(role);
+    if (value === 'admin') return ['obras', 'relatorio', 'insumos', 'usuarios'];
+    if (value === 'compras') return ['insumos'];
+    if (value === 'financeiro') return ['relatorio'];
+    if (value === 'obra') return ['obras', 'insumos'];
+    return [];
+  }
   function statusToDb(status) {
     if (status === 'em_rota') return 'em_rota';
     if (status === 'concluido') return 'concluido';
@@ -50,7 +58,7 @@
       projectIds: Array.isArray(row.obras_permitidas)
         ? row.obras_permitidas.map(id => obraUuidToExternal.get(String(id)) || id)
         : [],
-      modules: Array.isArray(row.modulos) ? row.modulos : ['insumos'],
+      modules: Array.isArray(row.modulos) ? row.modulos : defaultModulesForRole(row.perfil),
       _supabaseAuthenticated: row.id === window.EngeramaAuth?._lastUserId
     };
   }
