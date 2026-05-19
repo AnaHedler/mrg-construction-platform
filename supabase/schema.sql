@@ -273,6 +273,34 @@ select
 from auth_rows au
 cross join estado_atual;
 
+do $$
+declare
+  v_primeiro_usuario uuid;
+begin
+  if not exists (
+    select 1
+    from public.usuarios
+    where perfil = 'admin'::public.usuario_perfil
+      and ativo = true
+  ) then
+    select id into v_primeiro_usuario
+    from public.usuarios
+    order by created_at asc, email asc
+    limit 1;
+
+    if v_primeiro_usuario is not null then
+      update public.usuarios
+      set
+        perfil = 'admin',
+        ativo = true,
+        todas_obras = true,
+        modulos = array['obras','relatorio','insumos','usuarios']::text[],
+        updated_at = now()
+      where id = v_primeiro_usuario;
+    end if;
+  end if;
+end $$;
+
 create or replace function public.touch_updated_at()
 returns trigger
 language plpgsql

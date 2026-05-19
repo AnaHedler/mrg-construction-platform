@@ -297,7 +297,7 @@
         compraByPedido.get(row.id),
         auditByPedido.get(String(row.id)) || []
       )),
-      insumoUnits: ['metro linear','metro','m²','quilo','peça','litro'],
+      insumoUnits: ['metro linear','metro','m²','quilo','peça','litro','saco','m³'],
       notificacoes: notificacoesRes.data || []
     };
   }

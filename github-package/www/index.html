@@ -204,6 +204,10 @@
       <input type="hidden" id="insumo-receber-id">
       <div class="insumo-flow-material" id="insumo-receber-material">Material<span>Pedido selecionado</span></div>
       <div class="modal-field">
+        <label>Checklist de recebimento</label>
+        <div id="insumo-receber-checklist" class="receive-checklist">Marque os itens que chegaram na obra.</div>
+      </div>
+      <div class="modal-field">
         <label>NFE anexada pelo compras</label>
         <div id="insumo-receber-nfe" class="receive-checklist">Nenhuma NFE anexada neste pedido.</div>
       </div>
@@ -213,6 +217,7 @@
       </div>
       <div class="insumo-flow-actions">
         <button type="button" class="btn-action" onclick="closeInsumoReceiveModal()">Cancelar</button>
+        <button type="button" class="btn-action" onclick="sendMissingItemsFromReceive()">Avisar faltantes</button>
         <button type="submit" class="btn-action primary">Confirmar recebimento</button>
       </div>
     </form>

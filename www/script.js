@@ -2096,43 +2096,19 @@ async function saveUser(event) {
         msg.textContent = 'Usuário vinculado ao Supabase Auth com sucesso.';
         return;
       }
-      if (!newPassword) {
-        throw new Error('Informe uma senha temporária para criar o acesso no Supabase Auth.');
-      }
+      throw new Error('Função de vínculo com Supabase indisponível. Rode o SQL atualizado e tente novamente.');
     } catch(linkError) {
       const linkReason = String(linkError.message || '');
-      if (!/AUTH_USER_NOT_FOUND|not found|não encontrado|nao encontrado|Could not find the function/i.test(linkReason)) {
+      if (/AUTH_USER_NOT_FOUND|not found|não encontrado|nao encontrado/i.test(linkReason)) {
+        msg.textContent = 'Crie primeiro este e-mail no Supabase Auth. Depois volte aqui para liberar perfil, telas e obras.';
+        return;
+      }
+      if (/Could not find the function|indispon/i.test(linkReason)) {
+        msg.textContent = 'Rode o SQL atualizado no Supabase para liberar o vínculo automático de usuários.';
+        return;
+      }
+      {
         msg.textContent = 'Não foi possível vincular o usuário no Supabase: ' + linkReason;
-        return;
-      }
-      if (!newPassword) {
-        msg.textContent = 'Esse e-mail ainda não existe no Supabase Auth. Informe uma senha temporária para criar o acesso.';
-        return;
-      }
-      try {
-        const signup = await window.EngeramaAuth.signUp(username, newPassword, { username, phone, telefone: phone });
-        if (!signup.user?.id) throw new Error('Supabase não retornou o usuário criado.');
-        USERS.push({
-          id: signup.user.id,
-          email: signup.user.email || window.EngeramaAuth.emailFromLogin(username),
-          username,
-          phone,
-          role,
-          active,
-          allProjects,
-          projectIds: allProjects ? [] : projectIds,
-          modules,
-          updatedAt: new Date().toISOString(),
-          _supabaseAuthenticated: false
-        });
-        if (signup.emailConfirmationRequired) showToast('Usuário criado no Auth. Ele precisa confirmar o e-mail antes do primeiro login.', 'warn');
-      } catch(signupError) {
-        const signupReason = String(signupError.message || '');
-        if (/already|registered|exists|User already/i.test(signupReason)) {
-          msg.textContent = 'Esse e-mail já existe no Auth. Rode o SQL atualizado para liberar a função admin_upsert_usuario_por_email e salve novamente.';
-          return;
-        }
-        msg.textContent = 'Não foi possível criar no Supabase Auth: ' + signupReason;
         return;
       }
     }
@@ -2441,15 +2417,15 @@ const LS_INSUMOS = 'engerama_insumos_pedidos_v1';
 const LS_INSUMOS_BACKUP = 'engerama_insumos_pedidos_v1_backup';
 const LS_INSUMO_UNITS = 'engerama_insumos_unidades_v1';
 const COMPRAS_WHATSAPP = '5541992449307';
-const DEFAULT_INSUMO_UNITS = ['metro linear','metro','m²','quilo','peça','litro'];
+const DEFAULT_INSUMO_UNITS = ['metro linear','metro','m²','quilo','peça','litro','saco','m³'];
 const INSUMO_ITEM_SUGGESTIONS = [
-  {name:'Cimento CP-II 50 kg', unit:'peça', hint:'Saco individual'},
-  {name:'Areia média', unit:'metro', hint:'Medir volume solicitado'},
-  {name:'Brita 1', unit:'metro', hint:'Medir volume solicitado'},
+  {name:'Cimento CP-II 50 kg', unit:'saco', hint:'Saco individual'},
+  {name:'Areia média', unit:'m³', hint:'Volume em metro cúbico'},
+  {name:'Brita 1', unit:'m³', hint:'Volume em metro cúbico'},
   {name:'Vergalhão CA-50', unit:'metro linear', hint:'Barras por metro linear'},
   {name:'Tubo PVC', unit:'metro linear', hint:'Comprimento linear'},
   {name:'Conduíte corrugado', unit:'metro linear', hint:'Comprimento linear'},
-  {name:'Argamassa ACIII', unit:'peça', hint:'Saco individual'},
+  {name:'Argamassa ACIII', unit:'saco', hint:'Saco individual'},
   {name:'Tinta acrílica', unit:'litro', hint:'Quantidade em litros'},
   {name:'Parafuso', unit:'peça', hint:'Quantidade de itens'},
   {name:'Cabo elétrico', unit:'metro linear', hint:'Comprimento linear'},
@@ -2581,10 +2557,32 @@ function normalizeInsumoUnit(value) {
   if (['m linear','metro linear','ml'].includes(v)) return 'metro linear';
   if (['m','metro','metros'].includes(v)) return 'metro';
   if (['m2','m²','metro quadrado','metros quadrados'].includes(v)) return 'm²';
+  if (['m3','m³','metro cubico','metros cubicos','metro cúbico','metros cúbicos'].includes(v)) return 'm³';
   if (['kg','quilo','quilos'].includes(v)) return 'quilo';
   if (['pc','pç','peca','peça','un','und','unidade','unidades'].includes(v)) return 'peça';
   if (['l','lt','litro','litros'].includes(v)) return 'litro';
+  if (['saco','sacos','sc'].includes(v)) return 'saco';
   return INSUMO_UNITS.includes(value) ? value : 'peça';
+}
+function pluralizeInsumoUnit(unit, quantity) {
+  const normalized = normalizeInsumoUnit(unit);
+  const amount = Number(String(quantity || '').replace(',', '.'));
+  const plural = Number.isFinite(amount) && Math.abs(amount) !== 1;
+  if (!plural) return normalized;
+  const map = {
+    'metro linear': 'metros lineares',
+    'metro': 'metros',
+    'm²': 'm²',
+    'm³': 'm³',
+    'quilo': 'quilos',
+    'peça': 'peças',
+    'litro': 'litros',
+    'saco': 'sacos'
+  };
+  return map[normalized] || normalized;
+}
+function formatInsumoQuantityUnit(item) {
+  return String(item?.quantidade || '-') + ' ' + pluralizeInsumoUnit(item?.unidade || '', item?.quantidade);
 }
 function materialThumbText(name) {
   return String(name || '?').trim().slice(0,2).toUpperCase();
@@ -2614,7 +2612,12 @@ function selectMaterialSuggestion(name, unit) {
   const unitInput = document.getElementById('insumo-form-unidade');
   if (input) input.value = name;
   if (unitInput) unitInput.value = unit;
-  document.getElementById('material-suggestions')?.classList.remove('open');
+  const box = document.getElementById('material-suggestions');
+  if (box) {
+    box.classList.remove('open');
+    box.innerHTML = '';
+  }
+  input?.blur?.();
 }
 function normalizeInsumoItems(order) {
   const raw = Array.isArray(order?.items) && order.items.length
@@ -2624,7 +2627,10 @@ function normalizeInsumoItems(order) {
     .map(item => ({
       material: String(item?.material || '').trim(),
       quantidade: item?.quantidade ?? '',
-      unidade: normalizeInsumoUnit(item?.unidade || '')
+      unidade: normalizeInsumoUnit(item?.unidade || ''),
+      recebido: item?.recebido === true,
+      receivedAt: item?.receivedAt || '',
+      receivedBy: item?.receivedBy || ''
     }))
     .filter(item => item.material && String(item.quantidade || '').trim());
 }
@@ -2637,11 +2643,25 @@ function syncPrimaryInsumoItem(order) {
   order.unidade = first.unidade;
   return items;
 }
+function orderHasPurchase(order) {
+  return !!(order?.fornecedor || order?.boughtBy || order?.dataCompra || order?.boughtAt);
+}
+function orderHasPendingReceipt(order) {
+  if (!orderHasPurchase(order)) return false;
+  const items = normalizeInsumoItems(order);
+  return !!items.length && items.some(item => item.recebido !== true);
+}
+function receivedItemsSummary(order) {
+  const items = normalizeInsumoItems(order);
+  if (!items.length) return '-';
+  const done = items.filter(item => item.recebido === true).length;
+  return done + '/' + items.length + ' itens recebidos';
+}
 function formatInsumoItem(item) {
-  return String(item.quantidade || '-') + ' ' + String(item.unidade || '') + ' - ' + String(item.material || '-');
+  return formatInsumoQuantityUnit(item) + ' - ' + String(item.material || '-');
 }
 function formatInsumoItemWhatsApp(item) {
-  return String(item.material || '-') + ' — ' + String(item.quantidade || '-') + ' ' + String(item.unidade || '');
+  return String(item.material || '-') + ' — ' + formatInsumoQuantityUnit(item);
 }
 function insumoItemsTextWhatsApp(order) {
   const items = normalizeInsumoItems(order);
@@ -2676,7 +2696,7 @@ function insumoItemsTitle(order) {
 }
 function insumoItemsQtySummary(order) {
   const items = normalizeInsumoItems(order);
-  if (items.length <= 1) return (items[0]?.quantidade || order?.quantidade || '-') + ' ' + (items[0]?.unidade || order?.unidade || '');
+  if (items.length <= 1) return formatInsumoQuantityUnit(items[0] || {quantidade:order?.quantidade, unidade:order?.unidade});
   return items.length + ' itens';
 }
 function insumoItemsText(order) {
@@ -2698,7 +2718,7 @@ function renderInsumoFormItemsList() {
     return;
   }
   box.innerHTML = pendingInsumoFormItems.map((item, index) =>
-    '<div class="insumo-item-chip"><div><b>' + escHtml(item.material) + '</b><span>' + escHtml(item.quantidade + ' ' + item.unidade) + '</span></div><button type="button" onclick="removeInsumoFormItem(' + index + ')" title="Remover item">x</button></div>'
+    '<div class="insumo-item-chip"><div><b>' + escHtml(item.material) + '</b><span>' + escHtml(formatInsumoQuantityUnit(item)) + '</span></div><button type="button" onclick="removeInsumoFormItem(' + index + ')" title="Remover item">x</button></div>'
   ).join('');
 }
 function readInsumoItemInputs() {
@@ -3094,6 +3114,41 @@ function sendComprasAlteracaoWhatsApp(order, beforeText, motivo) {
   ].join('\n');
   return openWhatsAppToCompras(msg);
 }
+function sendMissingItemsWhatsApp(order) {
+  const project = PROJECTS.find(project => project.id === order.obraId);
+  const missing = normalizeInsumoItems(order).filter(item => item.recebido !== true);
+  if (!missing.length) {
+    showToast('Nao ha itens faltantes neste pedido.', 'warn');
+    return false;
+  }
+  const msg = [
+    'Pedido "#' + (order.numeroPedido || order.id) + '" - itens ainda nao chegaram',
+    'Informado por: ' + (currentUser || '-') + ' - ' + (project?.nome || 'Obra'),
+    'Data: ' + dateTimeBRFull(new Date().toISOString()),
+    '',
+    'Itens faltantes:',
+    missing.map(formatInsumoItemWhatsApp).join('\n'),
+    '',
+    order.receiveComment ? 'Observacao do recebimento: ' + order.receiveComment : ''
+  ].filter(Boolean).join('\n');
+  return openWhatsAppToCompras(msg);
+}
+function sendMissingItemsWhatsAppById(id) {
+  const order = INSUMO_ORDERS.find(item => item.id === id);
+  if (!order) return false;
+  return sendMissingItemsWhatsApp(order);
+}
+function sendMissingItemsFromReceive() {
+  const id = document.getElementById('insumo-receber-id')?.value;
+  const order = INSUMO_ORDERS.find(item => item.id === id);
+  if (!order) return false;
+  const missing = missingItemsFromReceiveModal(order);
+  if (!missing.length) {
+    showToast('Todos os itens estao marcados como recebidos.', 'warn');
+    return false;
+  }
+  return sendMissingItemsWhatsApp({...order, items: missing});
+}
 function renderNfePreview(nfe) {
   const el = document.getElementById('insumo-nfe-preview');
   if (!el) return;
@@ -3223,8 +3278,11 @@ function renderInsumos() {
       ? '<div class="insumo-meta">Anexos: ' + ((order.attachments?.length || 0) + (order.purchaseAttachments?.length || 0) + (order.nfe?.name ? 1 : 0)) + '</div>'
       : '';
     const itemsMini = insumoItemsMiniHtml(order);
+    const primaryAction = orderHasPendingReceipt(order)
+      ? '<button class="btn-action primary insumo-mobile-buy" title="Receber pedido" onclick="openInsumoReceiveModal(\'' + order.id + '\')">Receber</button>'
+      : (order.status === 'pendente' ? '<button class="btn-action primary insumo-mobile-buy" title="Comprar pedido" onclick="openInsumoPurchaseModal(\'' + order.id + '\')">Comprar</button>' : '');
     const actions = [
-      order.status === 'pendente' ? '<button class="btn-action primary insumo-mobile-buy" title="Comprar pedido" onclick="openInsumoPurchaseModal(\'' + order.id + '\')">Comprar</button>' : '',
+      primaryAction,
       '<button class="btn-action insumo-eye-btn" title="Ver pedido completo" onclick="openInsumoDetailModal(\'' + order.id + '\')">👁</button>'
     ].filter(Boolean).join('');
     return '<tr>' +
@@ -3500,10 +3558,15 @@ function markInsumoPurchased(id) {
 function openInsumoReceiveModal(id) {
   const order = INSUMO_ORDERS.find(item => item.id === id);
   if (!order) return;
+  if (!orderHasPendingReceipt(order)) {
+    showToast(order.status === 'concluido' ? 'Este pedido ja foi concluido.' : 'Registre a compra antes de receber.', 'warn');
+    return;
+  }
   if (refreshNfeItemsFromText(order)) saveInsumoOrders();
   document.getElementById('insumo-receber-id').value = id;
   document.getElementById('insumo-receber-material').innerHTML = escHtml(insumoItemsTitle(order)) + '<span>' + escHtml(insumoItemsQtySummary(order)) + '</span>';
   document.getElementById('insumo-receber-comentario').value = order.receiveComment || '';
+  renderReceiveItemsChecklist(order);
   renderReceiveNfeAttachment(order);
   document.getElementById('modal-insumo-receber').classList.add('open');
   setTimeout(() => document.getElementById('insumo-receber-comentario')?.focus(), 80);
@@ -3520,21 +3583,58 @@ function renderReceiveNfeAttachment(order) {
   }
   box.innerHTML = attachmentListHtml([order.nfe]);
 }
+function renderReceiveItemsChecklist(order) {
+  const box = document.getElementById('insumo-receber-checklist');
+  if (!box) return;
+  const items = normalizeInsumoItems(order);
+  if (!items.length) {
+    box.innerHTML = 'Nenhum item encontrado neste pedido.';
+    return;
+  }
+  box.innerHTML = items.map((item, index) =>
+    '<label class="receive-item-check">' +
+      '<input type="checkbox" data-index="' + index + '" ' + (item.recebido ? 'checked' : '') + '>' +
+      '<span><b>' + escHtml(item.material) + '</b><small>' + escHtml(formatInsumoQuantityUnit(item)) + '</small></span>' +
+    '</label>'
+  ).join('');
+}
+function missingItemsFromReceiveModal(order) {
+  const items = normalizeInsumoItems(order);
+  const checked = new Set(Array.from(document.querySelectorAll('#insumo-receber-checklist input[type="checkbox"]:checked')).map(input => Number(input.dataset.index)));
+  return items.filter((item, index) => !checked.has(index) && item.recebido !== true);
+}
 function saveInsumoReceive(event) {
   event.preventDefault();
   const id = document.getElementById('insumo-receber-id').value;
   const order = INSUMO_ORDERS.find(item => item.id === id);
   if (!order) return;
   const receiveComment = document.getElementById('insumo-receber-comentario').value.trim();
+  const checked = new Set(Array.from(document.querySelectorAll('#insumo-receber-checklist input[type="checkbox"]:checked')).map(input => Number(input.dataset.index)));
+  const items = normalizeInsumoItems(order).map((item, index) => {
+    const received = item.recebido === true || checked.has(index);
+    return {
+      ...item,
+      recebido: received,
+      receivedBy: received ? (item.receivedBy || currentUser) : '',
+      receivedAt: received ? (item.receivedAt || new Date().toISOString()) : ''
+    };
+  });
+  if (!items.some(item => item.recebido === true)) {
+    showToast('Marque pelo menos um item recebido.', 'error');
+    return;
+  }
+  order.items = items;
+  syncPrimaryInsumoItem(order);
+  const missing = items.filter(item => item.recebido !== true);
   order.receivedBy = currentUser;
   order.receivedAt = new Date().toISOString();
   order.receiveComment = receiveComment;
-  recordInsumoChange(order, 'Recebimento confirmado', 'Material recebido pela obra.');
-  order.status = 'concluido';
+  recordInsumoChange(order, missing.length ? 'Recebimento parcial' : 'Recebimento confirmado', missing.length ? 'Itens faltantes: ' + missing.map(formatInsumoItemWhatsApp).join(' | ') : 'Todos os itens recebidos pela obra.');
+  order.status = missing.length ? 'pendente' : 'concluido';
   order.updatedAt = new Date().toISOString();
   if (!saveInsumoOrders()) return;
   closeInsumoReceiveModal();
-  showToast('Material recebido e pedido concluido.', 'success');
+  showToast(missing.length ? 'Recebimento parcial salvo. Pedido voltou para pendente ate chegar o restante.' : 'Todos os itens foram recebidos e o pedido foi concluido.', missing.length ? 'warn' : 'success');
   renderInsumos();
 }
 function markInsumoReceived(id) {
@@ -3551,7 +3651,7 @@ document.addEventListener('click', function(event) {
 function openInsumoEditModal(id) {
   const order = INSUMO_ORDERS.find(item => item.id === id);
   if (!order) return;
-  if (order.status !== 'pendente') {
+  if (order.status !== 'pendente' || orderHasPurchase(order)) {
     showToast('Pedido so pode ser alterado antes da compra.', 'warn');
     return;
   }
@@ -3614,9 +3714,10 @@ function openInsumoDetailModal(id) {
   const history = Array.isArray(order.history) ? order.history : [];
   const content = document.getElementById('insumo-detail-content');
   const detailActions = [
-    order.status === 'pendente' ? '<button class="btn-action" onclick="openEditFromDetail(\'' + escJs(order.id) + '\')">Editar pedido</button>' : '',
-    order.status === 'pendente' ? '<button class="btn-action primary" onclick="openPurchaseFromDetail(\'' + escJs(order.id) + '\')">Comprar</button>' : '',
-    order.status === 'em_rota' ? '<button class="btn-action primary" onclick="openReceiveFromDetail(\'' + escJs(order.id) + '\')">Receber</button>' : '',
+    order.status === 'pendente' && !orderHasPurchase(order) ? '<button class="btn-action" onclick="openEditFromDetail(\'' + escJs(order.id) + '\')">Editar pedido</button>' : '',
+    order.status === 'pendente' && !orderHasPurchase(order) ? '<button class="btn-action primary" onclick="openPurchaseFromDetail(\'' + escJs(order.id) + '\')">Comprar</button>' : '',
+    orderHasPendingReceipt(order) ? '<button class="btn-action primary" onclick="openReceiveFromDetail(\'' + escJs(order.id) + '\')">Receber</button>' : '',
+    orderHasPendingReceipt(order) ? '<button class="btn-action" onclick="sendMissingItemsWhatsAppById(\'' + escJs(order.id) + '\')">Avisar faltantes</button>' : '',
     '<button class="btn-action" onclick="exportInsumoPedidoPdf(\'' + escJs(order.id) + '\')">Gerar PDF</button>',
     isAdmin() ? '<button class="btn-action" onclick="deleteInsumoFromDetail(\'' + escJs(order.id) + '\')">Apagar</button>' : ''
   ].filter(Boolean).join('');
@@ -3629,7 +3730,7 @@ function openInsumoDetailModal(id) {
       detailBox('Itens', insumoItemsText(order)) +
       detailBox('Quem pediu', (order.requestedBy || '-') + ' · ' + dateTimeBR(order.requestedAt)) +
       detailBox('Compra', order.fornecedor ? (order.fornecedor + ' · ' + (order.boughtBy || '-') + ' · ' + dateTimeBR(order.boughtAt || order.dataCompra)) : 'Aguardando compras') +
-      detailBox('Recebimento', order.receivedBy ? (order.receivedBy + ' · ' + dateTimeBR(order.receivedAt)) : 'Ainda nao recebido') +
+      detailBox('Recebimento', order.receivedBy ? (order.receivedBy + ' · ' + dateTimeBR(order.receivedAt) + ' · ' + receivedItemsSummary(order)) : receivedItemsSummary(order)) +
       detailBox('Para quando', order.neededBy ? dateTimeBR(order.neededBy) : '-') +
     '</div>' +
     '<div class="insumo-detail-section"><h3>Descricao e comentarios</h3><div class="insumo-detail-box"><b>' + escHtml(order.observacao || '-') + '</b>' +
