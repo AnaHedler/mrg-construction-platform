@@ -1008,14 +1008,22 @@ function renderDashboard() {
     const pvrW = Math.min(s.pvr, 100);
     const pvrBarClass = s.pvr >= 100 ? 'fill-green' : 'fill-red';
     const orcW = Math.min(s.orcPct, 100);
+    const photo = projectPhotoSrc(proj);
+    const coverHtml = photo
+      ? `<div class="proj-cover"><img src="${escHtml(photo)}" alt="${escHtml(proj.nome)}"><div class="proj-cover-shade"></div></div>`
+      : '';
+    const iconHtml = photo
+      ? `<div class="proj-icon proj-icon-photo">🏗️</div>`
+      : `<div class="proj-icon">🏗️</div>`;
 
     const card = document.createElement('div');
-    card.className = 'proj-card';
+    card.className = 'proj-card' + (photo ? ' has-photo' : '');
     card.onclick = () => openProject(proj.id);
     card.innerHTML = `
+      ${coverHtml}
       ${isAdmin() ? `<div class="proj-card-actions"><button class="proj-icon-btn" title="Editar" onclick="event.stopPropagation();editProject('${proj.id}')">✎</button><button class="proj-icon-btn" title="Apagar" onclick="event.stopPropagation();deleteProject('${proj.id}')">×</button></div>` : ''}
       <div class="proj-card-top">
-        <div class="proj-icon">🏗️</div>
+        ${iconHtml}
         <div class="proj-info">
           <h3>${proj.nome}</h3>
           <div class="proj-code">${proj.codigo}</div>
@@ -1084,8 +1092,19 @@ function renderDetail() {
   const orcBarW = Math.min(s.orcPct, 100);
   const pvrBarCls = s.pvr >= 100 ? 'fill-green' : 'fill-red';
   const custoBarCls = s.custoPct <= 100 ? 'fill-green' : 'fill-red';
+  const photo = projectPhotoSrc(proj);
+  const photoHero = photo ? `
+  <div class="project-detail-hero">
+    <img src="${escHtml(photo)}" alt="${escHtml(proj.nome)}">
+    <div>
+      <span>Obra em destaque</span>
+      <strong>${escHtml(proj.nome)}</strong>
+      <small>${escHtml(proj.codigo || '')} · ${dateFmt(proj.inicio)} → ${dateFmt(proj.termino)}</small>
+    </div>
+  </div>` : '';
 
   body.innerHTML = `
+  ${photoHero}
   <!-- ORC TOTAL -->
   <div class="orc-total-card">
     <div class="orc-total-header">
@@ -1434,6 +1453,13 @@ function openModalObra() {
   document.getElementById('no-inicio').value = '';
   document.getElementById('no-termino').value = '';
   document.getElementById('no-descricao').value = '';
+  document.getElementById('no-foto').value = '';
+  const photoPreview = document.getElementById('no-foto-preview');
+  if (photoPreview) {
+    delete photoPreview.dataset.pendingPhoto;
+    delete photoPreview.dataset.removePhoto;
+  }
+  renderProjectPhotoPreview(null);
   document.getElementById('modal-obra-err').style.display = 'none';
 }
 function closeModalObra() { document.getElementById('modal-nova-obra').classList.remove('open'); }
@@ -1452,6 +1478,13 @@ function editProject(id) {
   document.getElementById('no-inicio').value = proj.inicio || '';
   document.getElementById('no-termino').value = proj.termino || '';
   document.getElementById('no-descricao').value = proj.descricao || '';
+  document.getElementById('no-foto').value = '';
+  const photoPreview = document.getElementById('no-foto-preview');
+  if (photoPreview) {
+    delete photoPreview.dataset.pendingPhoto;
+    delete photoPreview.dataset.removePhoto;
+  }
+  renderProjectPhotoPreview(projectPhotoSrc(proj));
   document.getElementById('modal-obra-err').style.display = 'none';
 }
 
@@ -1487,7 +1520,52 @@ function undoDeleteProject() {
   showToast('Obra restaurada.', 'success');
 }
 
-function saveNovaObra() {
+function projectPhotoSrc(project) {
+  return project?.foto?.data || project?.fotoUrl || project?.imagem || '';
+}
+function renderProjectPhotoPreview(src) {
+  const box = document.getElementById('no-foto-preview');
+  if (!box) return;
+  if (!src) {
+    box.innerHTML = '<span>Sem foto selecionada</span>';
+    box.classList.remove('has-image');
+    return;
+  }
+  box.innerHTML = '<img src="' + escHtml(src) + '" alt="Prévia da obra"><button type="button" onclick="clearProjectPhoto()">Remover foto</button>';
+  box.classList.add('has-image');
+}
+async function previewProjectPhoto(event) {
+  const file = event.target.files?.[0];
+  if (!file) {
+    const existing = editingProjectId ? projectPhotoSrc(PROJECTS.find(p => p.id === editingProjectId)) : '';
+    renderProjectPhotoPreview(existing);
+    return;
+  }
+  if (!String(file.type || '').startsWith('image/')) {
+    showToast('Selecione uma imagem para a foto da obra.', 'error');
+    event.target.value = '';
+    return;
+  }
+  const data = await readFileAsDataURL(file);
+  const compressed = await compressImageDataURL(data);
+  renderProjectPhotoPreview(compressed);
+  const box = document.getElementById('no-foto-preview');
+  if (box) {
+    box.dataset.pendingPhoto = compressed;
+    delete box.dataset.removePhoto;
+  }
+}
+function clearProjectPhoto() {
+  const input = document.getElementById('no-foto');
+  const box = document.getElementById('no-foto-preview');
+  if (input) input.value = '';
+  if (box) {
+    delete box.dataset.pendingPhoto;
+    box.dataset.removePhoto = 'true';
+  }
+  renderProjectPhotoPreview(null);
+}
+async function saveNovaObra() {
   const nome = document.getElementById('no-nome').value.trim();
   const codigo = document.getElementById('no-codigo').value.trim();
   const status = document.getElementById('no-status').value;
@@ -1495,6 +1573,10 @@ function saveNovaObra() {
   const inicio = document.getElementById('no-inicio').value;
   const termino = document.getElementById('no-termino').value;
   const descricao = document.getElementById('no-descricao').value.trim();
+  const preview = document.getElementById('no-foto-preview');
+  const pendingPhoto = preview?.dataset.pendingPhoto || '';
+  const removePhoto = preview?.dataset.removePhoto === 'true';
+  let foto = null;
 
   const errEl = document.getElementById('modal-obra-err');
   if (!nome || !codigo || !orcamento || !inicio || !termino) {
@@ -1502,10 +1584,22 @@ function saveNovaObra() {
     return;
   }
   errEl.style.display = 'none';
+  if (pendingPhoto) {
+    foto = {
+      id: genId(),
+      name: 'foto-obra.jpg',
+      type: 'image/jpeg',
+      data: pendingPhoto,
+      uploadedBy: currentUser,
+      uploadedAt: new Date().toISOString()
+    };
+  }
 
   if (editingProjectId) {
     const proj = PROJECTS.find(p => p.id === editingProjectId);
     Object.assign(proj, {nome, codigo, status, orcamento, inicio, termino, descricao});
+    if (foto) proj.foto = foto;
+    if (removePhoto && !foto) delete proj.foto;
     saveProjects();
     closeModalObra();
     showToast('Projeto atualizado com sucesso!', 'success');
@@ -1517,6 +1611,7 @@ function saveNovaObra() {
   const newProj = {
     id: 'proj-' + Date.now(),
     nome, codigo, status, orcamento, inicio, termino, descricao,
+    ...(foto ? {foto} : {}),
     medicoes: [],
     curva: []
   };
