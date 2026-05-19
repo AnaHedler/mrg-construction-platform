@@ -69,6 +69,22 @@
     if (error) throw error;
     return Array.isArray(data) ? data[0] : data;
   }
+  async function ensureCurrentUsuario(authUser, login) {
+    const sb = client();
+    const email = authUser?.email || emailFromLogin(login);
+    const username = String(login || email || '').includes('@')
+      ? String(email || '').trim()
+      : String(login || email || '').trim();
+    const nome = authUser?.user_metadata?.name || authUser?.user_metadata?.nome || username || email;
+    const telefone = authUser?.user_metadata?.phone || authUser?.user_metadata?.telefone || null;
+    const { data, error } = await sb.rpc('ensure_current_usuario', {
+      p_username: username || email,
+      p_nome: nome || username || email,
+      p_telefone: telefone
+    });
+    if (error) throw error;
+    return Array.isArray(data) ? data[0] : data;
+  }
   async function fetchUsuario(authUser) {
     const sb = client();
     if (!sb || !authUser) return null;
@@ -83,7 +99,17 @@
   }
   async function profileFromAuthUser(authUser, login, createFirstAdmin = true) {
     let usuario = await fetchUsuario(authUser);
-    if (!usuario && createFirstAdmin) usuario = await setupFirstAdmin(authUser, login);
+    if (!usuario && createFirstAdmin) {
+      try {
+        usuario = await ensureCurrentUsuario(authUser, login);
+      } catch(ensureError) {
+        try {
+          usuario = await setupFirstAdmin(authUser, login);
+        } catch(adminError) {
+          throw ensureError;
+        }
+      }
+    }
     if (!usuario) throw new Error('Usuario autenticado sem permissao nesta empresa.');
     if (usuario.ativo === false) throw new Error('Usuario inativo.');
     window.EngeramaAuth._lastUserId = authUser.id;

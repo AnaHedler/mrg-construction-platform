@@ -429,6 +429,104 @@ $$;
 
 grant execute on function public.setup_first_admin(text, text, text, text) to authenticated;
 
+create or replace function public.ensure_current_usuario(
+  p_username text default null,
+  p_nome text default null,
+  p_telefone text default null
+)
+returns public.usuarios
+language plpgsql
+security definer
+set search_path = public, auth
+as $$
+declare
+  v_usuario public.usuarios;
+  v_auth auth.users;
+  v_email text;
+  v_username text;
+  v_nome text;
+  v_telefone text;
+  v_is_first boolean;
+begin
+  if auth.uid() is null then
+    raise exception 'Login Supabase necessario.';
+  end if;
+
+  select * into v_auth
+  from auth.users
+  where id = auth.uid()
+  limit 1;
+
+  if v_auth.id is null then
+    raise exception 'Usuario Auth nao encontrado.';
+  end if;
+
+  select * into v_usuario
+  from public.usuarios
+  where id = auth.uid()
+  limit 1;
+
+  if v_usuario.id is not null then
+    if v_usuario.ativo = false then
+      raise exception 'Usuario inativo.';
+    end if;
+    return v_usuario;
+  end if;
+
+  select not exists (
+    select 1
+    from public.usuarios
+    where perfil = 'admin'::public.usuario_perfil
+      and ativo = true
+  ) into v_is_first;
+
+  v_email := coalesce(nullif(trim(v_auth.email), ''), auth.uid()::text || '@sem-email.local');
+  v_username := coalesce(
+    nullif(trim(p_username), ''),
+    nullif(trim(v_auth.raw_user_meta_data ->> 'username'), ''),
+    nullif(trim(v_auth.raw_user_meta_data ->> 'usuario'), ''),
+    v_email
+  );
+  v_nome := coalesce(
+    nullif(trim(p_nome), ''),
+    nullif(trim(v_auth.raw_user_meta_data ->> 'nome'), ''),
+    nullif(trim(v_auth.raw_user_meta_data ->> 'name'), ''),
+    v_username
+  );
+  v_telefone := coalesce(
+    nullif(trim(p_telefone), ''),
+    nullif(trim(v_auth.raw_user_meta_data ->> 'telefone'), ''),
+    nullif(trim(v_auth.raw_user_meta_data ->> 'phone'), '')
+  );
+
+  insert into public.usuarios (
+    id, empresa_id, username, nome, email, telefone, perfil, ativo,
+    todas_obras, obras_permitidas, modulos
+  )
+  values (
+    auth.uid(),
+    '00000000-0000-4000-8000-000000000001'::uuid,
+    v_username,
+    v_nome,
+    v_email,
+    v_telefone,
+    case when v_is_first then 'admin'::public.usuario_perfil else 'visualizador'::public.usuario_perfil end,
+    true,
+    v_is_first,
+    '{}'::uuid[],
+    case
+      when v_is_first then array['obras','relatorio','insumos','usuarios']::text[]
+      else '{}'::text[]
+    end
+  )
+  returning * into v_usuario;
+
+  return v_usuario;
+end;
+$$;
+
+grant execute on function public.ensure_current_usuario(text, text, text) to authenticated;
+
 create or replace function public.admin_upsert_usuario_por_email(
   p_email text,
   p_username text,
